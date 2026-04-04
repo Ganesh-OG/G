@@ -326,7 +326,18 @@ function renderSocialManagerList() {
   if (!list) return;
 
   if (!socialRows.length) {
-    list.innerHTML = `<div class="admin-social-manager-empty">No social links yet. Add one to get started.</div>`;
+if (!socialRows.length) {
+  const emptyDiv = document.createElement("div");
+  emptyDiv.className = "admin-social-manager-empty";
+  emptyDiv.innerHTML = `
+    <p>No social links yet.</p>
+    <button type="button" class="admin-social-manager-add-defaults" onclick="addDefaultSocialLinks()">Add Default Platforms</button>
+    <p class="admin-social-manager-hint">Adds GitHub, LinkedIn, Facebook, Instagram, X/Twitter</p>
+  `;
+  list.appendChild(emptyDiv);
+  return;
+}
+list.innerHTML = "";
     return;
   }
 
