@@ -587,33 +587,37 @@
 (function () {
   const userData = localStorage.getItem("user");
 
-  // ❌ No session → block
+  // Paths
+  const ADMIN_LOGIN = "./Index.html";     // Admin login (same folder)
+  const USER_HOME   = "../index.html";    // User homepage
+
+  // ❌ No session → go to Admin login
   if (!userData) {
     alert("Unauthorized access 🚫");
-    window.location.href = "../index.html";
+    window.location.href = ADMIN_LOGIN;
     return;
   }
 
   try {
     const user = JSON.parse(userData);
 
-    // 🔐 Basic validation
+    // 🔐 Validate session
     if (!user || (!user.Email && !user.Username)) {
       throw "Invalid session";
     }
 
-    // 🔥 OPTIONAL: restrict only your admin user
+    // 🔥 Optional admin restriction
     if (user.Username !== "Ganesh") {
       alert("Access denied 🚫");
-      window.location.href = "../index.html";
+      window.location.href = ADMIN_LOGIN;
     }
 
   } catch (err) {
     console.error("Session error:", err);
 
-    // ❌ Corrupt session → clear and redirect
+    // ❌ Corrupt session → clear + redirect to admin login
     localStorage.removeItem("user");
-    window.location.href = "../index.html";
+    window.location.href = ADMIN_LOGIN;
   }
 })();
 </script>
