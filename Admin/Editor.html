@@ -583,6 +583,40 @@
   <!--
     - custom js link
   -->
+  <script>
+(function () {
+  const userData = localStorage.getItem("user");
+
+  // ❌ No session → block
+  if (!userData) {
+    alert("Unauthorized access 🚫");
+    window.location.href = "../index.html";
+    return;
+  }
+
+  try {
+    const user = JSON.parse(userData);
+
+    // 🔐 Basic validation
+    if (!user || (!user.Email && !user.Username)) {
+      throw "Invalid session";
+    }
+
+    // 🔥 OPTIONAL: restrict only your admin user
+    if (user.Username !== "Ganesh") {
+      alert("Access denied 🚫");
+      window.location.href = "../index.html";
+    }
+
+  } catch (err) {
+    console.error("Session error:", err);
+
+    // ❌ Corrupt session → clear and redirect
+    localStorage.removeItem("user");
+    window.location.href = "../index.html";
+  }
+})();
+</script>
   <script src="./assets/js/script.js"></script>
   <script type="module" src="./components/contact-form.js"></script>
 
