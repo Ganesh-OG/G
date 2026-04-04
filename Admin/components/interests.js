@@ -95,3 +95,4 @@ async function loadInterests() {
 }
 
 loadInterests();
+import "./interests-manager.js";

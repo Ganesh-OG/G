@@ -1,4 +1,5 @@
 import { getTable } from "./db.js";
+import { getStorage } from "./config.js";
 import { openEditor } from "./editor-tools.js";
 import { DB_BASE, SUPABASE_CONFIG } from "./config.js";
 
@@ -20,13 +21,11 @@ let socialRows = [];
 
 document.addEventListener("DOMContentLoaded", async () => {
   try {
-    socialRows = await getTable("social_links");
-    insertSocialLinks(socialRows);
-    ensureSocialManagerModal();
+    await fetchAndUpdateSocialLinks();
   } catch (error) {
     console.error("Error fetching social data:", error);
   }
-});
+}); // Social manager UI enabled - gear icon + header button provides edit/delete/add options
 
 function getDefaultPlatformConfig(platform) {
   return DEFAULT_SOCIAL_LINKS.find((item) => item.platform === platform);
@@ -96,14 +95,38 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
         <img class="admin-icon-preview" alt="Icon preview" hidden>
         <span class="admin-icon-preview-empty">No icon preview</span>
       </div>
-      <a class="admin-editor-file-btn admin-editor-file-download is-disabled admin-icon-download" aria-disabled="true" tabindex="-1">Download Icon</a>
+      <div class="admin-logo-actions">
+        <button type="button" class="admin-logo-action-btn admin-logo-replace" title="Replace Icon">
+          <ion-icon name="image-outline"></ion-icon>
+        </button>
+        <a class="admin-editor-file-btn admin-editor-file-download is-disabled admin-icon-download" aria-disabled="true" tabindex="-1" title="Download Icon">Download Icon</a>
+        <button type="button" class="admin-logo-action-btn admin-logo-remove" title="Remove Icon">
+          <ion-icon name="trash-outline"></ion-icon>
+        </button>
+        <button type="button" class="admin-logo-action-btn admin-logo-undo is-disabled" title="Undo Changes" aria-disabled="true" tabindex="-1">
+          <ion-icon name="refresh-outline"></ion-icon>
+        </button>
+      </div>
     `;
     iconField.appendChild(tools);
   }
 
-  const iconPreview = form.querySelector(".admin-icon-preview");
-  const iconPreviewEmpty = form.querySelector(".admin-icon-preview-empty");
-  const iconDownload = form.querySelector(".admin-icon-download");
+  // Logo action buttons
+  const replaceBtn = tools.querySelector('.admin-logo-replace');
+  const removeBtn = tools.querySelector('.admin-logo-remove');
+  const undoBtn = tools.querySelector('.admin-logo-undo');
+
+  let originalIconValue = iconInput.value?.trim() || '';
+  let hasIconChanges = false;
+
+  const updateUndoBtn = () => {
+    const currentValue = iconInput.value?.trim() || '';
+    const hasChanges = currentValue !== originalIconValue;
+    undoBtn.disabled = !hasChanges;
+    undoBtn.classList.toggle('is-disabled', !hasChanges);
+    undoBtn.toggleAttribute('aria-disabled', !hasChanges);
+    undoBtn.toggleAttribute('tabindex', !hasChanges ? '-1' : null);
+  };
 
   const updateIconPreview = () => {
     const iconValue = iconInput?.value?.trim();
@@ -121,6 +144,11 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
       iconDownload.classList.remove("is-disabled");
       iconDownload.removeAttribute("aria-disabled");
       iconDownload.removeAttribute("tabindex");
+
+      // Update buttons
+      replaceBtn.disabled = false;
+      removeBtn.disabled = false;
+      updateUndoBtn();
     } else {
       iconPreview.hidden = true;
       iconPreview.removeAttribute("src");
@@ -130,7 +158,50 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
       iconDownload.removeAttribute("download");
       iconDownload.setAttribute("aria-disabled", "true");
       iconDownload.setAttribute("tabindex", "-1");
+
+      // Update buttons
+      replaceBtn.disabled = false;
+      removeBtn.disabled = true;
+      updateUndoBtn();
     }
+  };
+    const iconValue = iconInput?.value?.trim();
+    const hasValue = Boolean(iconValue);
+    const iconUrl = hasValue ? `./assets/images/logo/${iconValue}` : "";
+
+    if (!iconPreview || !iconPreviewEmpty || !iconDownload) return;
+
+    if (hasValue) {
+      iconPreview.src = iconUrl;
+      iconPreview.hidden = false;
+      iconPreviewEmpty.hidden = true;
+      iconDownload.href = iconUrl;
+      iconDownload.download = iconValue;
+      iconDownload.classList.remove("is-disabled");
+      iconDownload.removeAttribute("aria-disabled");
+      iconDownload.removeAttribute("tabindex");
+
+      // Logo actions state
+      replaceBtn.disabled = false;
+      removeBtn.disabled = false;
+      undoBtn.disabled = !originalIconValue || iconValue === originalIconValue;
+    } else {
+      iconPreview.hidden = true;
+      iconPreview.removeAttribute("src");
+      iconPreviewEmpty.hidden = false;
+      iconDownload.classList.add("is-disabled");
+      iconDownload.removeAttribute("href");
+      iconDownload.removeAttribute("download");
+      iconDownload.setAttribute("aria-disabled", "true");
+      iconDownload.setAttribute("tabindex", "-1");
+
+      // Logo actions state
+      replaceBtn.disabled = false;
+      removeBtn.disabled = true;
+      undoBtn.disabled = true;
+    }
+
+    updateUndoBtn();
   };
 
   const applyTemplate = (selectedValue) => {
@@ -146,14 +217,18 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
       ) {
         urlInput.value = config.url;
       }
+      const oldIcon = iconInput.value;
       iconInput.value = config.icon;
+      if (oldIcon !== config.icon) hasIconChanges = true;
       updateIconPreview();
     } else if (selectedValue === "custom") {
       if (!platformInput.value || getDefaultPlatformConfig(platformInput.value)) {
         platformInput.value = "";
       }
+      const oldIcon = iconInput.value;
       if (!iconInput.value || DEFAULT_SOCIAL_LINKS.some((item) => item.icon === iconInput.value)) {
         iconInput.value = "";
+        hasIconChanges = true;
       }
       updateIconPreview();
     }
@@ -171,7 +246,44 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
     }
   });
 
-  iconInput?.addEventListener("input", updateIconPreview);
+  // Logo button handlers
+  replaceBtn.addEventListener('click', () => {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const newIconName = file.name.replace(/\.[^/.]+$/, '.png') || `${platformInput.value || 'logo'}.png`;
+          iconInput.value = newIconName;
+          hasIconChanges = true;
+          updateIconPreview();
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    fileInput.click();
+  });
+
+  removeBtn.addEventListener('click', () => {
+    const oldValue = iconInput.value;
+    iconInput.value = '';
+    if (oldValue) hasIconChanges = true;
+    updateIconPreview();
+  });
+
+  undoBtn.addEventListener('click', () => {
+    iconInput.value = originalIconValue;
+    hasIconChanges = false;
+    updateIconPreview();
+  });
+
+  iconInput?.addEventListener("input", () => {
+    hasIconChanges = true;
+    updateIconPreview();
+  });
 
   if (initialDefaultConfig) {
     platformInput.value = initialDefaultConfig.platform;
@@ -321,23 +433,76 @@ function ensureSocialManagerModal() {
   });
 }
 
+async function fetchAndUpdateSocialLinks() {
+  try {
+    console.log('[SOCIAL] Fetching social_links...');
+    const socials = await getTable("social_links");
+    console.log('[SOCIAL] Fetched:', socials);
+    socialRows = socials || [];
+
+    const socialList = document.querySelector('.social-list');
+    console.log('[SOCIAL] socialList found:', !!socialList, socialList);
+    console.log('[SOCIAL] socialRows length:', socialRows.length);
+
+    // Always insert links + gear
+    insertSocialLinks(socialRows);
+    
+    // Add header Manage button (copy certifications pattern)
+    const sidebarInfo = document.querySelector('.sidebar-info');
+    if (sidebarInfo) {
+      const existingControls = sidebarInfo.querySelector(".admin-section-header");
+      existingControls?.remove();
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "admin-section-header";
+
+      const titleElements = sidebarInfo.querySelectorAll(".name, .title");
+      titleElements.forEach(el => titleRow.appendChild(el.cloneNode(true)));
+
+      const manageButton = document.createElement("button");
+      manageButton.type = "button";
+      manageButton.className = "admin-inline-action-btn";
+      manageButton.textContent = "Manage Social Links";
+      manageButton.addEventListener("click", openSocialManager);
+      titleRow.appendChild(manageButton);
+      
+      sidebarInfo.appendChild(titleRow);
+    }
+
+    ensureSocialManagerModal();
+    console.log('[SOCIAL] Setup complete - gear/header ready');
+  } catch (error) {
+    console.error("[SOCIAL] Error fetching social links:", error);
+  }
+}
+
 function renderSocialManagerList() {
   const list = document.querySelector(".admin-social-manager-list");
   if (!list) return;
 
   if (!socialRows.length) {
-if (!socialRows.length) {
-  const emptyDiv = document.createElement("div");
-  emptyDiv.className = "admin-social-manager-empty";
-  emptyDiv.innerHTML = `
-    <p>No social links yet.</p>
-    <button type="button" class="admin-social-manager-add-defaults" onclick="addDefaultSocialLinks()">Add Default Platforms</button>
-    <p class="admin-social-manager-hint">Adds GitHub, LinkedIn, Facebook, Instagram, X/Twitter</p>
-  `;
-  list.appendChild(emptyDiv);
-  return;
-}
-list.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.className = "admin-social-manager-btn primary";
+    btn.textContent = "Add Default Platforms";
+    btn.addEventListener("click", async () => {
+      try {
+        const missing = getMissingDefaultPlatforms(socialRows);
+        for (const config of missing) {
+          await fetch(`${DB_BASE}/social_links`, {
+            method: "POST",
+            headers: HEADERS,
+            body: JSON.stringify({
+              platform: config.platform,
+              url: config.url,
+              icon: config.icon
+            })
+          });
+        }
+        window.location.reload();
+      } catch (e) { alert(e.message); }
+    });
+    list.innerHTML = '<div class="admin-social-manager-empty"><p>No social links. </p></div>';
+    list.appendChild(btn);
     return;
   }
 
@@ -387,12 +552,18 @@ function closeSocialManager() {
   modal.classList.remove("active");
 }
 
-function insertSocialLinks(rows) {
+function insertSocialLinks(rows = socialRows) {
   const socialList = document.querySelector(".social-list");
-  if (!socialList) return;
+  if (!socialList) {
+    console.error('[SOCIAL] .social-list not found');
+    return;
+  }
+
+  console.log('[SOCIAL] Inserting', rows.length, 'links + gear to socialList');
 
   socialList.innerHTML = "";
 
+  // Always add links (even if empty)
   rows.forEach((row) => {
     const listItem = document.createElement("li");
     listItem.classList.add("social-item");
@@ -415,6 +586,7 @@ function insertSocialLinks(rows) {
     socialList.appendChild(listItem);
   });
 
+  // ALWAYS add gear manager (even if no links)
   const managerItem = document.createElement("li");
   managerItem.className = "social-item social-item-manager";
   managerItem.innerHTML = `
@@ -425,6 +597,8 @@ function insertSocialLinks(rows) {
     </button>
   `;
 
-  managerItem.querySelector("button").addEventListener("click", openSocialManager);
+  const triggerBtn = managerItem.querySelector("button");
+  triggerBtn.addEventListener("click", openSocialManager);
   socialList.appendChild(managerItem);
+  console.log('[SOCIAL] Gear icon appended');
 }

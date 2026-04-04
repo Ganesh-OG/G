@@ -1,26 +1,25 @@
-# Social Links Editor ✅ COMPLETE
+# Smart Social Links Dropdown + Logo Actions
 
-**Status:** ✅ Done & Tested by User
+Status: [IN PROGRESS] ✅
 
-## Summary
+## Approved Plan Steps:
 
-- Gear icon → Manager modal now shows **Edit/Delete buttons** for each social link.
-- Empty state: "Add Default Platforms" button → adds Git/FB/IG/LinkedIn/X → reload → buttons appear.
-- Edit form: Template selector, icon preview, URL update, save to Supabase.
+**Previous (Gear Fix):**
 
-## Usage
+- [x] Gear always shows + console logs
 
-1. `Admin/Index.html` → login
-2. `Admin/Editor.html` → sidebar ↓ contacts → gear ⚙️ next to social icons
-3. Manage: Edit/Delete/Add custom links
+**Current Plan (Logo Actions):**
 
-## Serve
+- [ ] **1. Create/update TODO.md** ← Doing now
+- [x] **2. Edit social-links.js** - Add Replace/Download/Remove/Undo buttons to icon field in Add/Edit editors
+- [ ] **3. Test** - Open Admin/Editor.html → Manage Social Links → Add/Edit → Verify 4 logo buttons work (upload/download/clear/undo)
+- [ ] **4. User test feedback + fixes**
+- [ ] **5. Update TODO + attempt_completion**
 
-```
-# XAMPP Apache start
-http://localhost/.../G-main/G-main/Admin/Editor.html
-```
+## Test Instructions (Step 3):
 
-**Clean code optional later (duplicate if block).**
-
-Task complete!
+1. Open `Admin/Index.html` → Login → Editor.html.
+2. F5 reload → Sidebar gear icon → "Manage Social Links".
+3. Click "Add Social Link" or Edit → Icon field should have **4 buttons**: Replace, Download, Remove, Undo.
+4. Test: Download existing, Replace (upload new), Remove (clear), Undo (restore).
+5. **Copy DevTools console errors** + describe button behavior.
