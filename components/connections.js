@@ -1,5 +1,57 @@
 import { getTable } from "./db.js";
 import { getStorage } from "./config.js";
+import { createCircularSlider } from "./circular-slider.js";
+
+const ALL_CATEGORY = "all";
+
+function normalizeCategory(category) {
+    return String(category || "").trim().toLowerCase();
+}
+
+function parsePriorityArray(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+    }
+
+    const normalized = String(value || "").trim();
+    if (!normalized) return [];
+
+    if (normalized.startsWith("[")) {
+        try {
+            return parsePriorityArray(JSON.parse(normalized));
+        } catch (error) {
+            console.warn("Failed to parse priority JSON array:", error);
+        }
+    }
+
+    return normalized
+        .replace(/^\[|\]$/g, "")
+        .replace(/^\{|\}$/g, "")
+        .split(",")
+        .map((item) => Number(item.replace(/"/g, "").trim()))
+        .filter((item) => Number.isFinite(item));
+}
+
+function getCategoryPriority(categoryRows, category) {
+    const row = categoryRows.find((item) => normalizeCategory(item.category) === normalizeCategory(category));
+    return parsePriorityArray(row?.priority);
+}
+
+function sortRowsByPriority(rows, categoryRows, category) {
+    const priorityIds = getCategoryPriority(categoryRows, category);
+    const priorityIndex = new Map(priorityIds.map((id, index) => [Number(id), index]));
+    const prioritized = [];
+    const remaining = [];
+
+    rows.forEach((row) => {
+        const rowId = Number(row.id);
+        if (priorityIndex.has(rowId)) prioritized.push(row);
+        else remaining.push(row);
+    });
+
+    prioritized.sort((a, b) => priorityIndex.get(Number(a.id)) - priorityIndex.get(Number(b.id)));
+    return [...prioritized, ...remaining];
+}
 
 document.addEventListener("DOMContentLoaded", async function () {
 
@@ -36,7 +88,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         );
 
         const categories = categoryRows
-            .filter((row) => row.category)
+            .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
             .map((row) => ({
                 value: row.category,
                 label: row.label || row.category.replaceAll("_", " ")
@@ -67,7 +119,11 @@ document.addEventListener("DOMContentLoaded", async function () {
             </li>`;
 
             // Get rows belonging to this category
-            const items = rows.filter(row => row.category === value && isRealConnection(row));
+            const items = sortRowsByPriority(
+                rows.filter(row => row.category === value && isRealConnection(row)),
+                categoryRows,
+                value
+            );
 
             items.forEach(item => {
 
@@ -104,7 +160,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 ].filter(Boolean).join("");
 
                 projectItems += `
-                <li class="project-item connection-card-item" data-filter-item data-category="${value}">
+                <li class="project-item connection-card-item" data-filter-item data-category="${value}" data-row-id="${item.id}">
                     <div class="connection-card">
                         <figure class="connection-card__image-wrap">
                             <img class="connection-card__image" src="${image}" alt="${item.name}" loading="lazy">
@@ -141,9 +197,20 @@ document.addEventListener("DOMContentLoaded", async function () {
         selectList.innerHTML = selectItems;
         projectList.innerHTML = projectItems;
 
-        // Show all by default
-        document.querySelectorAll(".project-item").forEach(item => {
-            item.style.display = "block";
+        const allSortedRows = sortRowsByPriority(rows.filter(isRealConnection), categoryRows, ALL_CATEGORY);
+        allSortedRows.forEach((row) => {
+            const item = projectList.querySelector(`[data-row-id="${row.id}"]`);
+            if (item) projectList.appendChild(item);
+        });
+
+        projectList.querySelectorAll("[data-filter-item]").forEach((item) => {
+            item.setAttribute("data-slider-active", "true");
+        });
+
+        const slider = createCircularSlider(projectList, {
+            desktop: 3,
+            mobile: 1,
+            selector: "[data-filter-item]"
         });
 
         // Filter buttons
@@ -156,14 +223,24 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const category = this.getAttribute("data-filter-btn");
 
                 document.querySelectorAll("[data-filter-item]").forEach(item => {
-
-                    if (category === "all" || item.getAttribute("data-category") === category) {
-                        item.style.display = "block";
-                    } else {
-                        item.style.display = "none";
-                    }
-
+                    const isVisible = category === "all" || item.getAttribute("data-category") === category;
+                    item.setAttribute("data-slider-active", isVisible ? "true" : "false");
                 });
+
+                const sortedRows = category === ALL_CATEGORY
+                    ? sortRowsByPriority(rows.filter(isRealConnection), categoryRows, ALL_CATEGORY)
+                    : sortRowsByPriority(
+                        rows.filter((row) => normalizeCategory(row.category) === normalizeCategory(category) && isRealConnection(row)),
+                        categoryRows,
+                        category
+                    );
+
+                sortedRows.forEach((row) => {
+                    const item = projectList.querySelector(`[data-row-id="${row.id}"]`);
+                    if (item) projectList.appendChild(item);
+                });
+
+                slider?.refresh(true);
 
                 filterButtonsElements.forEach(btn => btn.classList.remove("active"));
                 this.classList.add("active");
@@ -175,6 +252,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         // Dropdown select filter
         const selectButtons = document.querySelectorAll("[data-select-item]");
         const dropdownMenu = document.getElementById("select-list");
+        const selectValue = document.querySelector("[data-select-value]");
+
+        if (selectValue) {
+            selectValue.textContent = "All";
+        }
 
         selectButtons.forEach(button => {
 
@@ -188,13 +270,18 @@ document.addEventListener("DOMContentLoaded", async function () {
                     filterButton.click();
                 }
 
-                document.querySelector("[data-select-value]").textContent = this.textContent;
+                if (selectValue) {
+                    selectValue.textContent = this.textContent;
+                }
 
                 dropdownMenu.style.display = "none";
 
             });
 
         });
+
+        const defaultAllButton = document.querySelector('[data-filter-btn="all"]');
+        defaultAllButton?.click();
 
     } catch (error) {
 

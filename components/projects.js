@@ -1,5 +1,151 @@
 import { getTable } from "./db.js";
 import { getStorage } from "./config.js";
+import { createCircularSlider } from "./circular-slider.js";
+import { openProjectPopup } from "./project-popup.js";
+
+const ALL_CATEGORY = "all";
+
+function normalizeCategory(category) {
+  return String(category || "").trim().toLowerCase();
+}
+
+function normalizeProjectAction(project = {}) {
+  const preferredAction = String(project?.project_type || project?.action_type || "redirect")
+    .trim()
+    .toLowerCase();
+
+  if (preferredAction === "file") return "file";
+  if (preferredAction === "popup") return "popup";
+  return "redirect";
+}
+
+function normalizeOrderKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getOrderKeyParts(value) {
+  const normalized = normalizeOrderKey(value);
+  const match = normalized.match(/^([a-z]*?)(\d+)$/i);
+
+  if (match) {
+    return {
+      raw: normalized,
+      prefix: match[1].toLowerCase(),
+      number: Number(match[2]),
+      hasNumber: true
+    };
+  }
+
+  return {
+    raw: normalized,
+    prefix: normalized,
+    number: Number.POSITIVE_INFINITY,
+    hasNumber: false
+  };
+}
+
+function compareOrderKeys(left, right) {
+  const leftParts = getOrderKeyParts(left);
+  const rightParts = getOrderKeyParts(right);
+
+  if (leftParts.hasNumber && rightParts.hasNumber && leftParts.number !== rightParts.number) {
+    return leftParts.number - rightParts.number;
+  }
+
+  if (leftParts.hasNumber !== rightParts.hasNumber) {
+    return leftParts.hasNumber ? -1 : 1;
+  }
+
+  if (leftParts.prefix !== rightParts.prefix) {
+    return leftParts.prefix.localeCompare(rightParts.prefix);
+  }
+
+  return leftParts.raw.localeCompare(rightParts.raw);
+}
+
+function getCategorySortKey(row = {}) {
+  const keyValue =
+    row?.Priority_key ??
+    row?.priority_key ??
+    row?.category_key ??
+    row?.Category_Key_letter ??
+    row?.label ??
+    row?.category ??
+    "";
+
+  return String(keyValue).trim().toUpperCase();
+}
+
+function sortCategoriesByKey(rows) {
+  return [...rows].sort((a, b) => {
+    const aPriority = Number(a?.Priority_key ?? a?.priority_key);
+    const bPriority = Number(b?.Priority_key ?? b?.priority_key);
+
+    if (Number.isFinite(aPriority) && Number.isFinite(bPriority) && aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+
+    if (Number.isFinite(aPriority) !== Number.isFinite(bPriority)) {
+      return Number.isFinite(aPriority) ? -1 : 1;
+    }
+
+    const keyComparison = compareOrderKeys(getCategorySortKey(a), getCategorySortKey(b));
+    if (keyComparison !== 0) return keyComparison;
+
+    return String(a?.label || a?.category || "").localeCompare(String(b?.label || b?.category || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function parsePriorityArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+  }
+
+  const normalized = String(value || "").trim();
+  if (!normalized) return [];
+
+  if (normalized.startsWith("[")) {
+    try {
+      return parsePriorityArray(JSON.parse(normalized));
+    } catch (error) {
+      console.warn("Failed to parse priority JSON array:", error);
+    }
+  }
+
+  return normalized
+    .replace(/^\[|\]$/g, "")
+    .replace(/^\{|\}$/g, "")
+    .split(",")
+    .map((item) => Number(item.replace(/"/g, "").trim()))
+    .filter((item) => Number.isFinite(item));
+}
+
+function getCategoryPriority(categoryRows, category) {
+  const row = categoryRows.find((item) => normalizeCategory(item.category) === normalizeCategory(category));
+  return parsePriorityArray(row?.priority);
+}
+
+function sortProjectsByPriority(rows, categoryRows, category, orderField = "all_Key") {
+  const priorityIds = getCategoryPriority(categoryRows, category);
+  const priorityIndex = new Map(priorityIds.map((id, index) => [Number(id), index]));
+  return [...rows].sort((a, b) => {
+    const keyComparison = compareOrderKeys(a?.[orderField], b?.[orderField]);
+    if (keyComparison !== 0) return keyComparison;
+
+    const aPriority = priorityIndex.has(Number(a?.id));
+    const bPriority = priorityIndex.has(Number(b?.id));
+
+    if (aPriority && bPriority) {
+      return priorityIndex.get(Number(a.id)) - priorityIndex.get(Number(b.id));
+    }
+
+    if (aPriority !== bPriority) {
+      return aPriority ? -1 : 1;
+    }
+
+    return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+  });
+}
 
 async function populateProjects() {
 
@@ -45,8 +191,8 @@ async function populateProjects() {
 
     const fallbackImageUrl = getStorage("Projects", "404.gif");
 
-    const categories = categoryRows
-      .filter((row) => row.category)
+    const categories = sortCategoriesByKey(categoryRows)
+      .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
       .map((row) => ({
         value: row.category,
         label: row.label || row.category
@@ -83,7 +229,7 @@ async function populateProjects() {
 
     });
 
-    rows.forEach(project => {
+    sortProjectsByPriority(rows.filter((project) => project.name), categoryRows, ALL_CATEGORY).forEach(project => {
 
       if (!project.name) return;
 
@@ -93,10 +239,12 @@ async function populateProjects() {
       projectItem.className = 'project-item';
       projectItem.setAttribute('project-filter-item', '');
       projectItem.setAttribute('data-category', formattedCategory);
+      projectItem.setAttribute('data-row-id', project.id);
 
       // ✅ NEW DATA ATTRIBUTES
-      projectItem.dataset.action = project.action_type?.toLowerCase();
+      projectItem.dataset.action = normalizeProjectAction(project);
       projectItem.dataset.key = project.project_key;
+      projectItem.dataset.fileName = project.project_file_name || project.file || "";
       projectItem.dataset.url = project.link;
 
       let imageUrl = project.file
@@ -127,7 +275,7 @@ async function populateProjects() {
         `;
       }
 
-      let contentHTML = `
+      const cardBodyHTML = `
         <figure class="project-img">
           ${imgElement.outerHTML}
         </figure>
@@ -136,6 +284,16 @@ async function populateProjects() {
           ${titleText}
         </h3>
       `;
+
+      const projectAction = normalizeProjectAction(project);
+      const isRedirectProject = projectAction === "redirect" && project.link;
+      const contentHTML = isRedirectProject
+        ? `
+          <a href="${project.link}" target="_blank" rel="noopener noreferrer">
+            ${cardBodyHTML}
+          </a>
+        `
+        : cardBodyHTML;
 
       projectItem.innerHTML = `
         ${contentHTML}
@@ -146,7 +304,17 @@ async function populateProjects() {
 
     });
 
-    attachEventListeners(newContent);
+    projectList.querySelectorAll("[project-filter-item]").forEach((item) => {
+      item.setAttribute("data-slider-active", "true");
+    });
+
+    const slider = createCircularSlider(projectList, {
+      desktop: 3,
+      mobile: 1,
+      selector: "[project-filter-item]"
+    });
+
+    attachEventListeners(newContent, slider, rows, categoryRows);
 
   }
 
@@ -159,13 +327,14 @@ async function populateProjects() {
 // =============================
 // EVENTS + FILTER + CLICK
 // =============================
-function attachEventListeners(container) {
+function attachEventListeners(container, slider, rows, categoryRows) {
 
   const projectSelect = container.querySelector("[project-select]");
   const projectSelectItems = container.querySelectorAll("[project-select-item]");
   const projectSelectValue = container.querySelector("[project-select-value]");
   const projectFilterBtn = container.querySelectorAll("[project-filter-btn]");
   const projectFilterItems = container.querySelectorAll("[project-filter-item]");
+  const projectList = container.querySelector(".project-list");
 
   // =============================
   // FILTER FUNCTION
@@ -174,13 +343,26 @@ function attachEventListeners(container) {
 
     projectFilterItems.forEach(item => {
 
-      if (selectedValue === "all" || selectedValue === item.dataset.category) {
-        item.style.display = 'block';
-      } else {
-        item.style.display = 'none';
-      }
+      const isVisible = selectedValue === "all" || selectedValue === item.dataset.category;
+      item.setAttribute("data-slider-active", isVisible ? "true" : "false");
 
     });
+
+    const sortedRows = selectedValue === ALL_CATEGORY
+      ? sortProjectsByPriority(rows.filter((project) => project.name), categoryRows, ALL_CATEGORY)
+      : sortProjectsByPriority(
+          rows.filter((project) => project.name && normalizeCategory(project.category) === normalizeCategory(selectedValue)),
+          categoryRows,
+          selectedValue,
+          "category_key"
+        );
+
+    sortedRows.forEach((project) => {
+      const item = projectList.querySelector(`[data-row-id="${project.id}"]`);
+      if (item) projectList.appendChild(item);
+    });
+
+    slider?.refresh(true);
 
   };
 
@@ -189,13 +371,7 @@ function attachEventListeners(container) {
   // =============================
   projectFilterFunc("all");
 
-  const isMobile = window.innerWidth <= 768;
-
-  if (isMobile) {
-    projectSelectValue.innerText = "Select category";
-  } else {
     projectSelectValue.innerText = "All";
-  }
 
   // =============================
   // SELECT DROPDOWN
@@ -265,7 +441,20 @@ function attachEventListeners(container) {
 
       const action = this.dataset.action;
       const key = this.dataset.key;
+      const fileName = this.dataset.fileName;
       const url = this.dataset.url;
+
+      if (action === "file") {
+        try {
+          await openProjectPopup({
+            title: this.querySelector(".project-title")?.textContent?.trim(),
+            fileName
+          });
+        } catch (err) {
+          console.error(err);
+        }
+        return;
+      }
 
       if (action === "redirect" && url) {
         window.open(url, "_blank");
@@ -273,13 +462,6 @@ function attachEventListeners(container) {
       }
 
       if (action === "popup" && key) {
-
-        const popup = document.getElementById("popup");
-        const content = document.getElementById("popup-content");
-
-        popup.style.display = "block";
-        content.innerHTML = "Loading...";
-
         try {
           const { data, error } = await window.supabase
             .from("project_details")
@@ -288,11 +470,12 @@ function attachEventListeners(container) {
             .single();
 
           if (error) throw error;
-
-          content.innerHTML = data.content;
+          openProjectPopup({
+            title: this.querySelector(".project-title")?.textContent?.trim(),
+            bundle: parseProjectDetailBundle(data.content)
+          });
 
         } catch (err) {
-          content.innerHTML = "Error loading project";
           console.error(err);
         }
       }
@@ -305,13 +488,7 @@ function attachEventListeners(container) {
   // OPTIONAL: HANDLE RESIZE
   // =============================
   window.addEventListener("resize", () => {
-    const isMobile = window.innerWidth <= 768;
-
-    if (isMobile) {
-      projectSelectValue.innerText = "Select category";
-    } else {
-      projectSelectValue.innerText = "All";
-    }
+    projectSelectValue.innerText = "All";
   });
 
 }

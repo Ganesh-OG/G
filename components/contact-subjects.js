@@ -1,4 +1,6 @@
-const STORAGE_KEY = "portfolioContactSubjects";
+import { getTable } from "./db.js";
+
+const TABLE_NAME = "Connect_Subjects";
 
 const DEFAULT_SUBJECTS = [
   { value: "Build-connection", label: "Just Wanted To Connect" },
@@ -9,26 +11,24 @@ const DEFAULT_SUBJECTS = [
   { value: "other", label: "Other" }
 ];
 
-function loadSubjects() {
+async function loadSubjects() {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_SUBJECTS;
+    const rows = await getTable(TABLE_NAME);
+    if (Array.isArray(rows) && rows.length) {
+      return rows;
     }
-
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_SUBJECTS;
   } catch (error) {
-    console.error("Failed to load contact subjects:", error);
-    return DEFAULT_SUBJECTS;
+    console.warn(`Failed to load ${TABLE_NAME}; using defaults.`, error);
   }
+
+  return DEFAULT_SUBJECTS;
 }
 
-function renderSubjectOptions() {
+async function renderSubjectOptions() {
   const select = document.querySelector('select[name="subject"]');
   if (!select) return;
 
-  const subjects = loadSubjects();
+  const subjects = await loadSubjects();
   select.innerHTML = `
     <option value="">Select a subject</option>
     ${subjects.map((subject) => `

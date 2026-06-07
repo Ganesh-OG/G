@@ -1,0 +1,33 @@
+{
+  "badge": "404",
+  "title": "Project Not Found",
+  "eyebrow": "Missing project data",
+  "subtitle": "The requested project file could not be loaded.",
+  "summary": "This project preview is shown when the requested JSON file does not exist or cannot be fetched.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Status", "value": "Not found" },
+    { "label": "Fallback", "value": "404.json" },
+    { "label": "View", "value": "Shared project renderer" }
+  ],
+  "blocks": [
+    {
+      "type": "image",
+      "title": "404 Image",
+      "location": "local",
+      "folder": "assets/images",
+      "file": "404.gif",
+      "alt": "404 not found",
+      "caption": "The project data file was not available."
+    },
+    {
+      "type": "text",
+      "title": "What happened",
+      "paragraphs": [
+        "The requested project file was missing, renamed, or not published yet.",
+        "Update the JSON file name in the admin panel or create the missing file."
+      ]
+    }
+  ]
+}

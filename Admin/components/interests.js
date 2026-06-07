@@ -1,6 +1,12 @@
 import { getTable } from "./db.js";
-import { getStorage } from "./config.js";
+import { DB_BASE, SUPABASE_CONFIG, getStorage } from "./config.js";
 import { addEditButton, openEditor } from "./editor-tools.js";
+
+const HEADERS = {
+  apikey: SUPABASE_CONFIG.key,
+  Authorization: `Bearer ${SUPABASE_CONFIG.key}`,
+  "Content-Type": "application/json"
+};
 
 async function loadInterests() {
 
@@ -14,6 +20,8 @@ async function loadInterests() {
       console.error("service-list element not found");
       return;
     }
+
+    serviceList.innerHTML = "";
 
     rows.forEach(interest => {
 
@@ -80,9 +88,82 @@ async function loadInterests() {
         }
       });
 
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "admin-interest-delete-btn";
+      deleteButton.setAttribute("aria-label", `Delete ${interest.title || "interest"}`);
+      deleteButton.innerHTML = `<ion-icon name="trash-outline"></ion-icon><span>Delete</span>`;
+      deleteButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const confirmed = window.confirm(`Delete "${interest.title}"?`);
+        if (!confirmed) return;
+
+        const response = await fetch(`${DB_BASE}/interests?id=eq.${encodeURIComponent(interest.id)}`, {
+          method: "DELETE",
+          headers: {
+            ...HEADERS,
+            Prefer: "return=minimal"
+          }
+        });
+
+        if (!response.ok) {
+          window.alert("Failed to delete interest.");
+          return;
+        }
+
+        li.remove();
+      });
+
+      li.appendChild(deleteButton);
+
       serviceList.appendChild(li);
 
     });
+
+    const addItem = document.createElement("li");
+    addItem.className = "service-item service-item-add";
+    addItem.innerHTML = `
+      <button type="button" class="admin-interest-add-btn" aria-label="Add new personal interest">
+        <span class="admin-interest-add-icon">
+          <ion-icon name="add-outline"></ion-icon>
+        </span>
+        <span class="admin-interest-add-label">Add Interest</span>
+      </button>
+    `;
+    addItem.querySelector("button").addEventListener("click", () => {
+      openEditor({
+        table: "interests",
+        title: "Add Interest",
+        method: "POST",
+        fields: [
+          { name: "title", label: "Title" },
+          { name: "message", label: "Description", type: "textarea" },
+          { name: "image", label: "Icon Image", type: "image", storageFolder: "Interests" }
+        ],
+        transformPayload: ({ payload }) => ({
+          title: payload.title?.trim(),
+          message: payload.message?.trim() || null,
+          image: payload.image || null
+        }),
+        submitHandler: async ({ payload }) => {
+          const response = await fetch(`${DB_BASE}/interests`, {
+            method: "POST",
+            headers: HEADERS,
+            body: JSON.stringify(payload)
+          });
+
+          if (response.ok) {
+            await loadInterests();
+          }
+
+          return response;
+        }
+      });
+    });
+
+    serviceList.appendChild(addItem);
 
   }
 
@@ -95,4 +176,3 @@ async function loadInterests() {
 }
 
 loadInterests();
-import "./interests-manager.js";

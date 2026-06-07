@@ -1,0 +1,37 @@
+{
+  "badge": "File-backed Prompt",
+  "title": "WS1 Compliance Checker",
+  "eyebrow": "Endpoint Security Validation for Workspace ONE",
+  "subtitle": "A quick health check for corporate endpoints.",
+  "summary": "As part of endpoint management activities, I developed a compliance validation tool that performs automated checks against enterprise security requirements.",
+  "prompt": "Use this page to describe the Workspace ONE validation flow and show how the script checks encryption, TPM readiness, and antivirus status.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Scenario", "value": "Workspace ONE compliance" },
+    { "label": "Checks", "value": "BitLocker, TPM, AV" },
+    { "label": "Output", "value": "Compliance summary" }
+  ],
+  "blocks": [
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "items": [
+        "Faster compliance checks",
+        "Improved endpoint security",
+        "Simplified troubleshooting"
+      ]
+    },
+    {
+      "type": "text",
+      "title": "What It Does",
+      "text": "The solution verifies BitLocker encryption, operating system version, TPM availability, and antivirus status before generating a compliance summary."
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "$Result = [PSCustomObject]@{\n    ComputerName = $env:COMPUTERNAME\n    BitLocker    = \"Unknown\"\n    TPM          = \"Unknown\"\n    Antivirus    = \"Unknown\"\n}\n\n$BL = Get-BitLockerVolume -MountPoint C:\n\nif ($BL.ProtectionStatus -eq \"On\")\n{\n    $Result.BitLocker = \"Compliant\"\n}\nelse\n{\n    $Result.BitLocker = \"Non-Compliant\"\n}\n\n$TPM = Get-Tpm\n\nif ($TPM.TpmReady)\n{\n    $Result.TPM = \"Available\"\n}\nelse\n{\n    $Result.TPM = \"Not Ready\"\n}\n\n$AV = Get-CimInstance `\n    -Namespace root/SecurityCenter2 `\n    -Class AntiVirusProduct\n\nif ($AV)\n{\n    $Result.Antivirus = \"Installed\"\n}\n\n$Result | Format-Table -AutoSize"
+    }
+  ]
+}

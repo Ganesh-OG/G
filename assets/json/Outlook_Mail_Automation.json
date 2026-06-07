@@ -1,0 +1,37 @@
+{
+  "badge": "File-backed Prompt",
+  "title": "Outlook Mail Automation",
+  "eyebrow": "Automating Daily Operational Communications",
+  "subtitle": "A PowerShell flow that sends reports through Outlook.",
+  "summary": "Sending repetitive status reports can become a manual overhead for IT teams. To simplify the process, I developed a PowerShell-based Outlook automation solution.",
+  "prompt": "Use this page to present the email automation flow, the standardized message content, and the Outlook script that attaches and sends the daily report.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Scenario", "value": "Outlook message automation" },
+    { "label": "Input", "value": "Report file and recipients" },
+    { "label": "Output", "value": "Email sent to stakeholders" }
+  ],
+  "blocks": [
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "items": [
+        "Reduced manual communication effort",
+        "Faster report delivery",
+        "Standardized messaging"
+      ]
+    },
+    {
+      "type": "text",
+      "title": "What It Does",
+      "text": "The script creates an Outlook message, attaches the report, adds the recipient list, and sends the email automatically."
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "$ReportFile = \"C:\\\\Reports\\\\DailyStatus.xlsx\"\n\n$Outlook = New-Object `\n    -ComObject Outlook.Application\n\n$Mail = $Outlook.CreateItem(0)\n\n$Mail.To = \"manager@company.com\"\n$Mail.CC = \"team@company.com\"\n\n$Mail.Subject = \"Daily Endpoint Status Report\"\n\n$Mail.HTMLBody = @\"\nHello Team,<br><br>\n\nPlease find attached today's endpoint report.<br><br>\n\nRegards,<br>\nAutomation System\n\"@\n\n$Mail.Attachments.Add($ReportFile)\n\n$Mail.Send()\n\nWrite-Host \"Mail sent successfully.\""
+    }
+  ]
+}

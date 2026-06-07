@@ -18,6 +18,7 @@ const HEADERS = {
 };
 
 let socialRows = [];
+const DEFAULT_ICON_FILENAMES = new Set(DEFAULT_SOCIAL_LINKS.map((item) => item.icon));
 
 document.addEventListener("DOMContentLoaded", async () => {
   try {
@@ -25,7 +26,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   } catch (error) {
     console.error("Error fetching social data:", error);
   }
-}); // Social manager UI enabled - gear icon + header button provides edit/delete/add options
+});
 
 function getDefaultPlatformConfig(platform) {
   return DEFAULT_SOCIAL_LINKS.find((item) => item.platform === platform);
@@ -33,6 +34,14 @@ function getDefaultPlatformConfig(platform) {
 
 function getIconFilename(row) {
   return row.icon || getDefaultPlatformConfig(row.platform)?.icon || `${row.platform}.png`;
+}
+
+function resolveSocialIconUrl(iconFilename) {
+  if (!iconFilename) return "";
+  if (DEFAULT_ICON_FILENAMES.has(iconFilename)) {
+    return `./assets/images/logo/${iconFilename}`;
+  }
+  return getStorage("logo", iconFilename);
 }
 
 function getMissingDefaultPlatforms(rows) {
@@ -80,77 +89,60 @@ async function submitSocialLink({ table, rowId, method, payload, headers, dbBase
   });
 }
 
+async function handleSocialSave(args) {
+  const response = await submitSocialLink(args);
+
+  if (response.ok) {
+    try {
+      socialRows = await getTable("social_links");
+    } catch (error) {
+      console.error("[SOCIAL] Failed to refresh rows after save:", error);
+    }
+
+    insertSocialLinks(socialRows);
+    renderSocialManagerList(socialRows);
+    setTimeout(() => {
+      openSocialManager();
+    }, 550);
+  }
+
+  return response;
+}
+
 function bindSocialFormBehavior(form, initialDefaultConfig) {
   const templateSelect = form.querySelector('[name="platform_template"]');
   const platformInput = form.querySelector('[name="platform"]');
   const urlInput = form.querySelector('[name="url"]');
   const iconInput = form.querySelector('[name="icon"]');
-  const iconField = iconInput?.closest(".admin-editor-field");
-
-  if (iconField && !iconField.querySelector(".admin-icon-tools")) {
-    const tools = document.createElement("div");
-    tools.className = "admin-icon-tools";
-    tools.innerHTML = `
-      <div class="admin-icon-preview-wrap">
-        <img class="admin-icon-preview" alt="Icon preview" hidden>
-        <span class="admin-icon-preview-empty">No icon preview</span>
-      </div>
-      <div class="admin-logo-actions">
-        <button type="button" class="admin-logo-action-btn admin-logo-replace" title="Replace Icon">
-          <ion-icon name="image-outline"></ion-icon>
-        </button>
-        <a class="admin-editor-file-btn admin-editor-file-download is-disabled admin-icon-download" aria-disabled="true" tabindex="-1" title="Download Icon">Download Icon</a>
-        <button type="button" class="admin-logo-action-btn admin-logo-remove" title="Remove Icon">
-          <ion-icon name="trash-outline"></ion-icon>
-        </button>
-        <button type="button" class="admin-logo-action-btn admin-logo-undo is-disabled" title="Undo Changes" aria-disabled="true" tabindex="-1">
-          <ion-icon name="refresh-outline"></ion-icon>
-        </button>
-      </div>
-    `;
-    iconField.appendChild(tools);
-  }
-
-  // Logo action buttons
-  const replaceBtn = tools.querySelector('.admin-logo-replace');
-  const removeBtn = tools.querySelector('.admin-logo-remove');
-  const undoBtn = tools.querySelector('.admin-logo-undo');
-
-  let originalIconValue = iconInput.value?.trim() || '';
-  let hasIconChanges = false;
-
-  const updateUndoBtn = () => {
-    const currentValue = iconInput.value?.trim() || '';
-    const hasChanges = currentValue !== originalIconValue;
-    undoBtn.disabled = !hasChanges;
-    undoBtn.classList.toggle('is-disabled', !hasChanges);
-    undoBtn.toggleAttribute('aria-disabled', !hasChanges);
-    undoBtn.toggleAttribute('tabindex', !hasChanges ? '-1' : null);
-  };
+  const iconField = iconInput?.closest(".admin-editor-file-field");
+  const iconPreview = iconField?.querySelector(".admin-editor-image-preview");
+  const iconPreviewEmpty = iconField?.querySelector(".admin-editor-image-empty");
+  const iconDownload = iconField?.querySelector('[data-file-action="download"]');
+  const iconNote = iconField?.querySelector(".admin-editor-file-note strong");
+  const undoButton = iconField?.querySelector('[data-file-action="undo"]');
+  const fileInput = iconField?.querySelector(".admin-editor-file-input");
 
   const updateIconPreview = () => {
     const iconValue = iconInput?.value?.trim();
     const hasValue = Boolean(iconValue);
-    const iconUrl = hasValue ? `./assets/images/logo/${iconValue}` : "";
+    const iconUrl = hasValue ? resolveSocialIconUrl(iconValue) : "";
 
     if (!iconPreview || !iconPreviewEmpty || !iconDownload) return;
 
     if (hasValue) {
       iconPreview.src = iconUrl;
       iconPreview.hidden = false;
+      iconPreview.classList.remove("is-empty");
       iconPreviewEmpty.hidden = true;
       iconDownload.href = iconUrl;
       iconDownload.download = iconValue;
       iconDownload.classList.remove("is-disabled");
       iconDownload.removeAttribute("aria-disabled");
       iconDownload.removeAttribute("tabindex");
-
-      // Update buttons
-      replaceBtn.disabled = false;
-      removeBtn.disabled = false;
-      updateUndoBtn();
+      if (iconNote) iconNote.textContent = iconValue;
     } else {
       iconPreview.hidden = true;
+      iconPreview.classList.add("is-empty");
       iconPreview.removeAttribute("src");
       iconPreviewEmpty.hidden = false;
       iconDownload.classList.add("is-disabled");
@@ -158,50 +150,11 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
       iconDownload.removeAttribute("download");
       iconDownload.setAttribute("aria-disabled", "true");
       iconDownload.setAttribute("tabindex", "-1");
-
-      // Update buttons
-      replaceBtn.disabled = false;
-      removeBtn.disabled = true;
-      updateUndoBtn();
-    }
-  };
-    const iconValue = iconInput?.value?.trim();
-    const hasValue = Boolean(iconValue);
-    const iconUrl = hasValue ? `./assets/images/logo/${iconValue}` : "";
-
-    if (!iconPreview || !iconPreviewEmpty || !iconDownload) return;
-
-    if (hasValue) {
-      iconPreview.src = iconUrl;
-      iconPreview.hidden = false;
-      iconPreviewEmpty.hidden = true;
-      iconDownload.href = iconUrl;
-      iconDownload.download = iconValue;
-      iconDownload.classList.remove("is-disabled");
-      iconDownload.removeAttribute("aria-disabled");
-      iconDownload.removeAttribute("tabindex");
-
-      // Logo actions state
-      replaceBtn.disabled = false;
-      removeBtn.disabled = false;
-      undoBtn.disabled = !originalIconValue || iconValue === originalIconValue;
-    } else {
-      iconPreview.hidden = true;
-      iconPreview.removeAttribute("src");
-      iconPreviewEmpty.hidden = false;
-      iconDownload.classList.add("is-disabled");
-      iconDownload.removeAttribute("href");
-      iconDownload.removeAttribute("download");
-      iconDownload.setAttribute("aria-disabled", "true");
-      iconDownload.setAttribute("tabindex", "-1");
-
-      // Logo actions state
-      replaceBtn.disabled = false;
-      removeBtn.disabled = true;
-      undoBtn.disabled = true;
+      if (iconNote) iconNote.textContent = "None";
     }
 
-    updateUndoBtn();
+    if (undoButton) undoButton.hidden = true;
+    if (fileInput) fileInput.value = "";
   };
 
   const applyTemplate = (selectedValue) => {
@@ -217,18 +170,14 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
       ) {
         urlInput.value = config.url;
       }
-      const oldIcon = iconInput.value;
       iconInput.value = config.icon;
-      if (oldIcon !== config.icon) hasIconChanges = true;
       updateIconPreview();
     } else if (selectedValue === "custom") {
       if (!platformInput.value || getDefaultPlatformConfig(platformInput.value)) {
         platformInput.value = "";
       }
-      const oldIcon = iconInput.value;
       if (!iconInput.value || DEFAULT_SOCIAL_LINKS.some((item) => item.icon === iconInput.value)) {
         iconInput.value = "";
-        hasIconChanges = true;
       }
       updateIconPreview();
     }
@@ -246,44 +195,7 @@ function bindSocialFormBehavior(form, initialDefaultConfig) {
     }
   });
 
-  // Logo button handlers
-  replaceBtn.addEventListener('click', () => {
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = 'image/*';
-    fileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const newIconName = file.name.replace(/\.[^/.]+$/, '.png') || `${platformInput.value || 'logo'}.png`;
-          iconInput.value = newIconName;
-          hasIconChanges = true;
-          updateIconPreview();
-        };
-        reader.readAsDataURL(file);
-      }
-    };
-    fileInput.click();
-  });
-
-  removeBtn.addEventListener('click', () => {
-    const oldValue = iconInput.value;
-    iconInput.value = '';
-    if (oldValue) hasIconChanges = true;
-    updateIconPreview();
-  });
-
-  undoBtn.addEventListener('click', () => {
-    iconInput.value = originalIconValue;
-    hasIconChanges = false;
-    updateIconPreview();
-  });
-
-  iconInput?.addEventListener("input", () => {
-    hasIconChanges = true;
-    updateIconPreview();
-  });
+  iconInput?.addEventListener("input", updateIconPreview);
 
   if (initialDefaultConfig) {
     platformInput.value = initialDefaultConfig.platform;
@@ -303,6 +215,7 @@ function openSocialEditor(row) {
     table: "social_links",
     row,
     title: `${row.platform} Link`,
+    refreshMode: "close",
     fields: [
       {
         name: "platform_template",
@@ -315,8 +228,8 @@ function openSocialEditor(row) {
         ]
       },
       { name: "platform", label: "Platform", value: row.platform },
-      { name: "url", label: "Link", value: row.url, type: "url" },
-      { name: "icon", label: "Icon", value: getIconFilename(row) }
+      { name: "url", label: "Link", value: row.url, type: "text" },
+      { name: "icon", label: "Icon", value: getIconFilename(row), type: "image", storageFolder: "logo" }
     ],
     onOpen: ({ form }) => bindSocialFormBehavior(form, defaultConfig),
     onBack: openSocialManager,
@@ -325,7 +238,7 @@ function openSocialEditor(row) {
       url: payload.url?.trim(),
       icon: payload.icon?.trim()
     }),
-    submitHandler: submitSocialLink
+    submitHandler: handleSocialSave
   });
 }
 
@@ -337,6 +250,7 @@ function openAddSocialEditor() {
     table: "social_links",
     title: "Add Social Link",
     method: "POST",
+    refreshMode: "close",
     fields: [
       {
         name: "platform_template",
@@ -349,8 +263,8 @@ function openAddSocialEditor() {
         ]
       },
       { name: "platform", label: "Platform", value: "" },
-      { name: "url", label: "Link", value: "", type: "url" },
-      { name: "icon", label: "Icon", value: "" }
+      { name: "url", label: "Link", value: "", type: "text" },
+      { name: "icon", label: "Icon", value: "", type: "image", storageFolder: "logo" }
     ],
     onOpen: ({ form }) => bindSocialFormBehavior(form, getDefaultPlatformConfig(firstOption)),
     onBack: openSocialManager,
@@ -359,7 +273,7 @@ function openAddSocialEditor() {
       url: payload.url?.trim(),
       icon: payload.icon?.trim()
     }),
-    submitHandler: submitSocialLink
+    submitHandler: handleSocialSave
   });
 }
 
@@ -380,7 +294,10 @@ async function deleteSocialLink(row) {
       throw new Error(await response.text());
     }
 
-    window.location.reload();
+    socialRows = socialRows.filter((item) => String(item.id) !== String(row.id));
+    insertSocialLinks(socialRows);
+    renderSocialManagerList(socialRows);
+    openSocialManager();
   } catch (error) {
     window.alert(`Failed to delete social link.\n${error.message}`);
   }
@@ -409,7 +326,7 @@ function ensureSocialManagerModal() {
       <div class="admin-social-manager-toolbar">
         <button type="button" class="admin-social-manager-add">Add Social Link</button>
       </div>
-      <div class="admin-social-manager-list"></div>
+      <div class="admin-social-manager-list" id="admin-social-manager-list"></div>
     </section>
   `;
 
@@ -433,60 +350,40 @@ function ensureSocialManagerModal() {
   });
 }
 
-async function fetchAndUpdateSocialLinks() {
+async function fetchAndUpdateSocialLinks({ preserveOnEmpty = false } = {}) {
   try {
-    console.log('[SOCIAL] Fetching social_links...');
     const socials = await getTable("social_links");
-    console.log('[SOCIAL] Fetched:', socials);
-    socialRows = socials || [];
-
-    const socialList = document.querySelector('.social-list');
-    console.log('[SOCIAL] socialList found:', !!socialList, socialList);
-    console.log('[SOCIAL] socialRows length:', socialRows.length);
-
-    // Always insert links + gear
-    insertSocialLinks(socialRows);
-    
-    // Add header Manage button (copy certifications pattern)
-    const sidebarInfo = document.querySelector('.sidebar-info');
-    if (sidebarInfo) {
-      const existingControls = sidebarInfo.querySelector(".admin-section-header");
-      existingControls?.remove();
-
-      const titleRow = document.createElement("div");
-      titleRow.className = "admin-section-header";
-
-      const titleElements = sidebarInfo.querySelectorAll(".name, .title");
-      titleElements.forEach(el => titleRow.appendChild(el.cloneNode(true)));
-
-      const manageButton = document.createElement("button");
-      manageButton.type = "button";
-      manageButton.className = "admin-inline-action-btn";
-      manageButton.textContent = "Manage Social Links";
-      manageButton.addEventListener("click", openSocialManager);
-      titleRow.appendChild(manageButton);
-      
-      sidebarInfo.appendChild(titleRow);
+    if (
+      Array.isArray(socials) &&
+      (socials.length || !preserveOnEmpty || !socialRows.length)
+    ) {
+      socialRows = socials;
     }
 
+    insertSocialLinks(socialRows);
+    document.querySelector(".admin-social-links-inline")?.remove();
     ensureSocialManagerModal();
-    console.log('[SOCIAL] Setup complete - gear/header ready');
+
+    const modal = document.getElementById("admin-social-manager");
+    if (modal?.classList.contains("active")) {
+      renderSocialManagerList(socialRows);
+    }
   } catch (error) {
     console.error("[SOCIAL] Error fetching social links:", error);
   }
 }
 
-function renderSocialManagerList() {
-  const list = document.querySelector(".admin-social-manager-list");
+function renderSocialManagerList(rows = socialRows) {
+  const list = document.querySelector("#admin-social-manager #admin-social-manager-list");
   if (!list) return;
 
-  if (!socialRows.length) {
+  if (!rows.length) {
     const btn = document.createElement("button");
     btn.className = "admin-social-manager-btn primary";
     btn.textContent = "Add Default Platforms";
     btn.addEventListener("click", async () => {
       try {
-        const missing = getMissingDefaultPlatforms(socialRows);
+        const missing = getMissingDefaultPlatforms(rows);
         for (const config of missing) {
           await fetch(`${DB_BASE}/social_links`, {
             method: "POST",
@@ -508,29 +405,57 @@ function renderSocialManagerList() {
 
   list.innerHTML = "";
 
-  socialRows.forEach((row) => {
+  rows.forEach((row) => {
     const card = document.createElement("div");
     card.className = "admin-social-manager-card";
-    card.innerHTML = `
-      <div class="admin-social-manager-card-main">
-        <img src="./assets/images/logo/${getIconFilename(row)}" alt="${row.platform}" width="22">
-        <div class="admin-social-manager-copy">
-          <strong>${row.platform}</strong>
-          <span>${row.url}</span>
-        </div>
-      </div>
-      <div class="admin-social-manager-actions">
-        <button type="button" class="admin-social-manager-btn" data-action="edit">Edit</button>
-        <button type="button" class="admin-social-manager-btn danger" data-action="delete">Delete</button>
-      </div>
-    `;
+    const main = document.createElement("div");
+    main.className = "admin-social-manager-card-main";
 
-    card.querySelector('[data-action="edit"]').addEventListener("click", () => {
+    const icon = document.createElement("img");
+    icon.src = resolveSocialIconUrl(getIconFilename(row));
+    icon.alt = row.platform || "Social icon";
+    icon.width = 22;
+
+    const copy = document.createElement("div");
+    copy.className = "admin-social-manager-copy";
+
+    const title = document.createElement("strong");
+    title.textContent = row.platform || "Untitled";
+
+    const url = document.createElement("span");
+    url.textContent = row.url || "No link set";
+
+    copy.appendChild(title);
+    copy.appendChild(url);
+    main.appendChild(icon);
+    main.appendChild(copy);
+
+    const actions = document.createElement("div");
+    actions.className = "admin-social-manager-actions";
+
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "admin-social-manager-btn";
+    editButton.dataset.action = "edit";
+    editButton.textContent = "Edit";
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "admin-social-manager-btn danger";
+    deleteButton.dataset.action = "delete";
+    deleteButton.textContent = "Delete";
+
+    actions.appendChild(editButton);
+    actions.appendChild(deleteButton);
+    card.appendChild(main);
+    card.appendChild(actions);
+
+    editButton.addEventListener("click", () => {
       closeSocialManager();
       openSocialEditor(row);
     });
 
-    card.querySelector('[data-action="delete"]').addEventListener("click", () => {
+    deleteButton.addEventListener("click", () => {
       closeSocialManager();
       deleteSocialLink(row);
     });
@@ -539,11 +464,19 @@ function renderSocialManagerList() {
   });
 }
 
-function openSocialManager() {
-  renderSocialManagerList();
+async function openSocialManager() {
+  ensureSocialManagerModal();
+  renderSocialManagerList(socialRows);
+
   const modal = document.getElementById("admin-social-manager");
   if (!modal) return;
   modal.classList.add("active");
+
+  try {
+    await fetchAndUpdateSocialLinks({ preserveOnEmpty: true });
+  } catch (error) {
+    console.error("[SOCIAL] Failed to refresh manager rows:", error);
+  }
 }
 
 function closeSocialManager() {
@@ -555,15 +488,12 @@ function closeSocialManager() {
 function insertSocialLinks(rows = socialRows) {
   const socialList = document.querySelector(".social-list");
   if (!socialList) {
-    console.error('[SOCIAL] .social-list not found');
+    console.error("[SOCIAL] .social-list not found");
     return;
   }
 
-  console.log('[SOCIAL] Inserting', rows.length, 'links + gear to socialList');
-
   socialList.innerHTML = "";
 
-  // Always add links (even if empty)
   rows.forEach((row) => {
     const listItem = document.createElement("li");
     listItem.classList.add("social-item");
@@ -577,7 +507,7 @@ function insertSocialLinks(rows = socialRows) {
     }
 
     const imgElement = document.createElement("img");
-    imgElement.src = `./assets/images/logo/${getIconFilename(row)}`;
+    imgElement.src = resolveSocialIconUrl(getIconFilename(row));
     imgElement.alt = row.platform;
     imgElement.width = 18;
 
@@ -586,7 +516,6 @@ function insertSocialLinks(rows = socialRows) {
     socialList.appendChild(listItem);
   });
 
-  // ALWAYS add gear manager (even if no links)
   const managerItem = document.createElement("li");
   managerItem.className = "social-item social-item-manager";
   managerItem.innerHTML = `
@@ -597,8 +526,6 @@ function insertSocialLinks(rows = socialRows) {
     </button>
   `;
 
-  const triggerBtn = managerItem.querySelector("button");
-  triggerBtn.addEventListener("click", openSocialManager);
+  managerItem.querySelector("button").addEventListener("click", openSocialManager);
   socialList.appendChild(managerItem);
-  console.log('[SOCIAL] Gear icon appended');
 }

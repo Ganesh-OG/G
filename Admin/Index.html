@@ -2,236 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin Login</title>
-
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background: radial-gradient(circle at top, #0f0f0f, #000);
-      font-family: 'Segoe UI', sans-serif;
-    }
-
-    .login-box {
-      width: 360px;
-      padding: 40px 30px;
-      border-radius: 16px;
-      background: #141414;
-      border: 1px solid #2a2a2a;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
-      text-align: center;
-      animation: fadeIn 0.6s ease;
-    }
-
-    .login-box h2 {
-      color: #f5f5f5;
-      margin-bottom: 25px;
-      font-weight: 600;
-    }
-
-    input {
-      width: 100%;
-      padding: 12px;
-      margin: 12px 0;
-      border-radius: 10px;
-      border: 1px solid #2a2a2a;
-      background: #1c1c1c;
-      color: #fff;
-      transition: 0.25s;
-    }
-
-    input::placeholder {
-      color: #888;
-    }
-
-    input:focus {
-      border-color: #d4af37;
-      box-shadow: 0 0 8px rgba(212,175,55,0.4);
-      outline: none;
-    }
-
-    button {
-      width: 100%;
-      padding: 12px;
-      margin-top: 15px;
-      border-radius: 10px;
-      border: none;
-      background: #d4af37;
-      color: #000;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.25s ease;
-    }
-
-    button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 15px rgba(212,175,55,0.4);
-    }
-
-    button:active {
-      transform: scale(0.98);
-    }
-
-    .error {
-      margin-top: 10px;
-      font-size: 13px;
-      color: #ff4d4d;
-    }
-
-    /* ===== POPUP ===== */
-    .popup-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.8);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      z-index: 999;
-    }
-
-    .popup-box {
-      background: #141414;
-      padding: 30px;
-      border-radius: 14px;
-      text-align: center;
-      border: 1px solid #2a2a2a;
-      width: 300px;
-    }
-
-    .popup-buttons {
-      margin-top: 20px;
-      display: flex;
-      gap: 10px;
-    }
-
-    .popup-buttons button {
-      flex: 1;
-      background: #d4af37;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(15px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-  </style>
+  <link rel="shortcut icon" href="./assets/images/logo.ico" type="image/x-icon">
+  <link rel="stylesheet" href="./assets/CSS/style.css">
+  <link rel="stylesheet" href="./assets/CSS/index.css">
 </head>
-
 <body>
-
-  <div class="login-box">
-    <h2>Admin Login</h2>
-
-    <form onsubmit="login(); return false;">
-      <input type="text" id="loginInput" placeholder="Email or Username" />
-      <input type="password" id="password" placeholder="Password" />
-      <button type="submit">Login</button>
-    </form>
-
-    <p class="error" id="error"></p>
-  </div>
-
-  <!-- MODULE SCRIPT -->
-  <script type="module">
-  import { SUPABASE_CONFIG } from "./components/config.js";
-  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
-
-  const supabase = createClient(
-    SUPABASE_CONFIG.url,
-    SUPABASE_CONFIG.key
-  );
-
-  // ===== LOGIN FUNCTION =====
-  window.login = async function () {
-    const input = document.getElementById("loginInput").value.trim();
-    const password = document.getElementById("password").value.trim();
-    const errorEl = document.getElementById("error");
-
-    if (!input || !password) {
-      errorEl.innerText = "Please fill all fields";
-      return;
-    }
-
-    errorEl.innerText = "Checking...";
-
-    try {
-      // 🔥 Fetch all users (reliable for now)
-      const { data, error } = await supabase
-        .from("Login")
-        .select("*");
-
-      console.log("Fetched Users:", data); // DEBUG
-
-      if (error || !data) {
-        console.error(error);
-        errorEl.innerText = "Something went wrong ❌";
-        return;
-      }
-
-      // 🔥 Match username/email + password
-      const user = data.find(u =>
-        (u.Email?.toLowerCase() === input.toLowerCase() ||
-         u.Username?.toLowerCase() === input.toLowerCase()) &&
-        u.Password?.trim() === password
-      );
-
-      if (!user) {
-        errorEl.innerText = "Username or Password is wrong ❌";
-      } else {
-        localStorage.setItem("user", JSON.stringify(user));
-        showChoicePopup();
-      }
-
-    } catch (err) {
-      console.error("LOGIN ERROR:", err);
-      errorEl.innerText = "Something went wrong ❌";
-    }
-  };
-
-  // ===== POPUP =====
-  function showChoicePopup() {
-    const popup = document.createElement("div");
-    popup.innerHTML = `
-      <div class="popup-overlay">
-        <div class="popup-box">
-          <h3>Welcome 👋</h3>
-          <p>Select where you want to go</p>
-          <div class="popup-buttons">
-            <button onclick="goMessages()">Messages</button>
-            <button onclick="goAdmin()">Admin Page</button>
-          </div>
-        </div>
+  <main class="admin-login-shell">
+    <section class="admin-login-panel">
+      <div>
+        <p class="admin-login-kicker">Admin Access</p>
+        <h1 class="admin-login-title">Welcome Back</h1>
       </div>
-    `;
-    document.body.appendChild(popup);
-  }
+      <form class="admin-login-form" id="admin-login-form">
+        <input type="text" id="loginInput" placeholder="Email or Username" autocomplete="username" />
+        <div class="admin-password-field">
+          <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
+          <button type="button" class="admin-password-toggle" data-password-toggle aria-label="Show password">
+            <ion-icon name="eye-outline"></ion-icon>
+          </button>
+        </div>
+        <button type="submit" class="admin-login-submit">Open Admin Editor</button>
+      </form>
 
-  // ===== NAVIGATION =====
-  window.goMessages = function () {
-    alert("Messages coming soon 🚧");
-  };
+      <p class="admin-login-status" id="error"></p>
+    </section>
+  </main>
 
-  window.goAdmin = function () {
-    window.location.href = "Editor.html";
-  };
-</script>
-
+  <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
+  <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
+  <script type="module" src="./assets/js/index.js"></script>
 </body>
 </html>

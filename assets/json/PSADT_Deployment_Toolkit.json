@@ -1,0 +1,38 @@
+{
+  "badge": "File-backed Prompt",
+  "title": "PSADT Deployment Toolkit",
+  "eyebrow": "Standardizing Enterprise Application Deployments",
+  "subtitle": "A consistent install flow for enterprise software.",
+  "summary": "Software deployment consistency is critical in enterprise environments. Using PowerShell App Deployment Toolkit (PSADT), I created deployment packages that provide a structured installation experience with logging, user prompts, detection logic, and rollback support.",
+  "prompt": "Use this page to show the standardized deployment story, including the user prompt, install progress, logging, and the final success or failure branch.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Scenario", "value": "Enterprise software deployment" },
+    { "label": "Capabilities", "value": "Logging, prompts, rollback" },
+    { "label": "Output", "value": "Standardized install flow" }
+  ],
+  "blocks": [
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "items": [
+        "Standardized deployment process",
+        "Better user experience",
+        "Detailed installation logs",
+        "Simplified troubleshooting"
+      ]
+    },
+    {
+      "type": "text",
+      "title": "What It Does",
+      "text": "The framework improves deployment reliability while simplifying application lifecycle management."
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "Show-InstallationWelcome `\n    -CloseApps \"OUTLOOK,EXCEL,WINWORD\" `\n    -AllowDefer `\n    -DeferTimes 3\n\nShow-InstallationProgress `\n    -StatusMessage \"Installing Application...\"\n\nExecute-Process `\n    -Path \"Setup.exe\" `\n    -Parameters \"/Silent /NoRestart\"\n\nif ($LastExitCode -eq 0)\n{\n    Write-Log `\n        -Message \"Installation completed successfully\" `\n        -Source DeployApplication\n}\nelse\n{\n    Write-Log `\n        -Message \"Installation failed\" `\n        -Severity 3 `\n        -Source DeployApplication\n}\n\nShow-InstallationPrompt `\n    -Message \"Application installed successfully.\"\n\nExit-Script -ExitCode 0"
+    }
+  ]
+}

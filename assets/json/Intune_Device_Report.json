@@ -1,0 +1,37 @@
+{
+  "badge": "File-backed Prompt",
+  "title": "Intune Device Report",
+  "eyebrow": "Building Automated Endpoint Compliance Reports",
+  "subtitle": "A Microsoft Graph export for Intune-managed devices.",
+  "summary": "Maintaining visibility of managed devices is essential in modern endpoint environments. I created a reporting solution that connects to Microsoft Graph and exports Intune-managed device information into CSV format.",
+  "prompt": "Use this page to preview the Intune compliance reporting workflow, the exported device fields, and the PowerShell that builds the CSV report.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Scenario", "value": "Microsoft Intune reporting" },
+    { "label": "Input", "value": "Microsoft Graph device data" },
+    { "label": "Output", "value": "CSV compliance report" }
+  ],
+  "blocks": [
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "items": [
+        "Faster compliance audits",
+        "Device inventory visibility",
+        "Automated reporting"
+      ]
+    },
+    {
+      "type": "text",
+      "title": "What It Does",
+      "text": "The report includes compliance status, operating system details, ownership information, and assigned users."
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "Connect-MgGraph `\n    -Scopes DeviceManagementManagedDevices.Read.All\n\n$Devices = Get-MgDeviceManagementManagedDevice -All\n\n$Report = foreach ($Device in $Devices)\n{\n    [PSCustomObject]@{\n        DeviceName       = $Device.DeviceName\n        User             = $Device.UserPrincipalName\n        OS               = $Device.OperatingSystem\n        OSVersion        = $Device.OsVersion\n        ComplianceState  = $Device.ComplianceState\n        LastSync         = $Device.LastSyncDateTime\n        Ownership        = $Device.ManagedDeviceOwnerType\n    }\n}\n\n$Report |\nSort-Object DeviceName |\nExport-Csv `\n\".\\\\Intune_Device_Report.csv\" `\n-NoTypeInformation\n\nWrite-Host \"Report generated successfully.\""
+    }
+  ]
+}

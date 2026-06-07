@@ -1,0 +1,114 @@
+body {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 219, 112, 0.08), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(255, 219, 112, 0.06), transparent 25%),
+    var(--smoky-black);
+}
+
+.admin-login-shell {
+  width: min(420px, 100%);
+}
+
+.admin-login-panel {
+  background: var(--eerie-black-2);
+  border: 1px solid var(--jet);
+  border-radius: 24px;
+  box-shadow: var(--shadow-5);
+  padding: 28px;
+  display: grid;
+  gap: 22px;
+  align-content: start;
+}
+
+.admin-login-kicker {
+  color: var(--orange-yellow-crayola);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--fs-8);
+}
+
+.admin-login-title {
+  color: var(--white-2);
+  font-size: clamp(32px, 5vw, 44px);
+  line-height: 1.1;
+}
+
+.admin-login-copy {
+  color: var(--light-gray);
+  font-size: var(--fs-6);
+  line-height: 1.7;
+}
+
+.admin-login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-login-form input {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--jet);
+  background: var(--onyx);
+  color: var(--white-2);
+}
+
+.admin-login-form input::placeholder {
+  color: var(--light-gray-70);
+}
+
+.admin-login-form input:focus {
+  outline: none;
+  border-color: rgba(255, 219, 112, 0.5);
+  box-shadow: 0 0 0 1px rgba(255, 219, 112, 0.2) inset;
+}
+
+.admin-password-field {
+  position: relative;
+}
+
+.admin-password-field input {
+  padding-right: 56px;
+}
+
+.admin-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid var(--jet);
+  background: transparent;
+  color: var(--orange-yellow-crayola);
+}
+
+.admin-password-toggle ion-icon {
+  font-size: 18px;
+}
+
+.admin-login-submit {
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: var(--orange-yellow-crayola);
+  color: var(--smoky-black);
+  font-weight: var(--fw-600);
+  text-align: center;
+}
+
+.admin-login-status {
+  min-height: 20px;
+  color: var(--light-gray);
+  font-size: var(--fs-7);
+}
+
+.admin-login-status.error {
+  color: #ff9b9b;
+}

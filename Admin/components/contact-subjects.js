@@ -1,7 +1,8 @@
 import { openEditor } from "./editor-tools.js";
+import { DB_BASE, SUPABASE_CONFIG } from "./config.js";
+import { getTable } from "./db.js";
 
-const STORAGE_KEY = "portfolioContactSubjects";
-
+const TABLE_NAME = "Connect_Subjects";
 const DEFAULT_SUBJECTS = [
   { value: "Build-connection", label: "Just Wanted To Connect" },
   { value: "job-offer", label: "Job Offer" },
@@ -11,6 +12,14 @@ const DEFAULT_SUBJECTS = [
   { value: "other", label: "Other" }
 ];
 
+const HEADERS = {
+  apikey: SUPABASE_CONFIG.key,
+  Authorization: `Bearer ${SUPABASE_CONFIG.key}`,
+  "Content-Type": "application/json"
+};
+
+let subjectRows = [];
+
 function slugify(value) {
   return String(value || "")
     .trim()
@@ -19,30 +28,37 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "");
 }
 
-function loadSubjects() {
+async function fetchSubjectRows() {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      return [...DEFAULT_SUBJECTS];
-    }
-
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.length ? parsed : [...DEFAULT_SUBJECTS];
+    const rows = await getTable(TABLE_NAME);
+    subjectRows = Array.isArray(rows) ? rows : [];
   } catch (error) {
-    console.error("Failed to load contact subjects:", error);
-    return [...DEFAULT_SUBJECTS];
+    console.warn(`Failed to fetch ${TABLE_NAME}; using defaults.`, error);
+    subjectRows = DEFAULT_SUBJECTS.map((item, index) => ({
+      id: index + 1,
+      label: item.label,
+      value: item.value
+    }));
   }
+
+  return subjectRows;
 }
 
-function saveSubjects(subjects) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(subjects));
+function getNormalizedSubjects() {
+  return subjectRows.length
+    ? subjectRows
+    : DEFAULT_SUBJECTS.map((item, index) => ({
+        id: index + 1,
+        label: item.label,
+        value: item.value
+      }));
 }
 
 function renderSubjectOptions() {
   const select = document.querySelector('select[name="subject"]');
   if (!select) return;
 
-  const subjects = loadSubjects();
+  const subjects = getNormalizedSubjects();
   select.innerHTML = `
     <option value="">Select a subject</option>
     ${subjects.map((subject) => `
@@ -92,11 +108,12 @@ function ensureContactSubjectManager() {
   });
 }
 
-function renderContactSubjectManager() {
+async function renderContactSubjectManager() {
   const list = document.getElementById("admin-contact-subjects-list");
   if (!list) return;
 
-  const subjects = loadSubjects();
+  await fetchSubjectRows();
+  const subjects = getNormalizedSubjects();
 
   if (!subjects.length) {
     list.innerHTML = `<div class="admin-social-manager-empty">No subjects yet. Add one to get started.</div>`;
@@ -105,7 +122,7 @@ function renderContactSubjectManager() {
 
   list.innerHTML = "";
 
-  subjects.forEach((subject, index) => {
+  subjects.forEach((subject) => {
     const card = document.createElement("div");
     card.className = "admin-social-manager-card";
     card.innerHTML = `
@@ -116,14 +133,34 @@ function renderContactSubjectManager() {
         </div>
       </div>
       <div class="admin-social-manager-actions">
+        <button type="button" class="admin-social-manager-btn" data-action="edit">Edit</button>
         <button type="button" class="admin-social-manager-btn danger" data-action="delete">Delete</button>
       </div>
     `;
 
-    card.querySelector('[data-action="delete"]').addEventListener("click", () => {
-      const nextSubjects = loadSubjects();
-      nextSubjects.splice(index, 1);
-      saveSubjects(nextSubjects);
+    card.querySelector('[data-action="edit"]').addEventListener("click", () => {
+      closeContactSubjectManager();
+      openEditSubjectEditor(subject);
+    });
+
+    card.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+      const confirmed = window.confirm(`Delete subject "${subject.label}"?`);
+      if (!confirmed) return;
+
+      const response = await fetch(`${DB_BASE}/${TABLE_NAME}?id=eq.${encodeURIComponent(subject.id)}`, {
+        method: "DELETE",
+        headers: {
+          ...HEADERS,
+          Prefer: "return=minimal"
+        }
+      });
+
+      if (!response.ok) {
+        window.alert("Failed to delete subject.");
+        return;
+      }
+
+      await fetchSubjectRows();
       renderSubjectOptions();
       renderContactSubjectManager();
     });
@@ -149,7 +186,7 @@ function closeContactSubjectManager() {
 
 function openAddSubjectEditor() {
   openEditor({
-    table: "contact_subjects",
+    table: TABLE_NAME,
     title: "Add Contact Subject",
     method: "POST",
     fields: [
@@ -158,28 +195,77 @@ function openAddSubjectEditor() {
     ],
     onBack: openContactSubjectManager,
     showBackButton: true,
-    submitHandler: async ({ payload }) => {
+    transformPayload: ({ payload }) => {
       const label = payload.label?.trim();
-      const value = payload.value?.trim() || slugify(label);
-
-      if (!label) {
+      return {
+        label,
+        value: payload.value?.trim() || slugify(label)
+      };
+    },
+    submitHandler: async ({ payload }) => {
+      if (!payload.label) {
         return new Response("Subject label is required.", { status: 400 });
       }
 
-      const subjects = loadSubjects();
-      subjects.push({ label, value });
-      saveSubjects(subjects);
-      renderSubjectOptions();
-
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
+      const response = await fetch(`${DB_BASE}/${TABLE_NAME}`, {
+        method: "POST",
+        headers: {
+          ...HEADERS,
+          Prefer: "return=representation"
+        },
+        body: JSON.stringify(payload)
       });
+
+      if (response.ok) {
+        await fetchSubjectRows();
+        renderSubjectOptions();
+      }
+
+      return response;
+    }
+  });
+}
+
+function openEditSubjectEditor(subject) {
+  openEditor({
+    table: TABLE_NAME,
+    row: subject,
+    title: `Edit Subject: ${subject.label}`,
+    method: "PATCH",
+    fields: [
+      { name: "label", value: subject.label || "" },
+      { name: "value", value: subject.value || "" }
+    ],
+    onBack: openContactSubjectManager,
+    showBackButton: true,
+    transformPayload: ({ payload }) => {
+      const label = payload.label?.trim();
+      return {
+        label,
+        value: payload.value?.trim() || slugify(label)
+      };
     },
-    transformPayload: ({ payload }) => ({
-      label: payload.label?.trim(),
-      value: payload.value?.trim()
-    })
+    submitHandler: async ({ payload, rowId }) => {
+      if (!payload.label) {
+        return new Response("Subject label is required.", { status: 400 });
+      }
+
+      const response = await fetch(`${DB_BASE}/${TABLE_NAME}?id=eq.${encodeURIComponent(rowId)}`, {
+        method: "PATCH",
+        headers: {
+          ...HEADERS,
+          Prefer: "return=representation"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        await fetchSubjectRows();
+        renderSubjectOptions();
+      }
+
+      return response;
+    }
   });
 }
 
@@ -187,25 +273,25 @@ function insertContactSubjectButton() {
   const article = document.querySelector('article.contact[data-page="contact"]');
   const header = article?.querySelector("header");
   const title = header?.querySelector(".article-title");
+  if (article && header && title && !header.querySelector(".admin-contact-subjects-header")) {
+    const row = document.createElement("div");
+    row.className = "admin-section-header admin-contact-subjects-header";
+    row.appendChild(title);
 
-  if (!article || !header || !title || header.querySelector(".admin-section-header")) {
-    return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "admin-inline-action-btn";
+    button.textContent = "Manage Subjects";
+    button.addEventListener("click", openContactSubjectManager);
+    row.appendChild(button);
+    header.appendChild(row);
   }
 
-  const row = document.createElement("div");
-  row.className = "admin-section-header";
-  row.appendChild(title);
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "admin-inline-action-btn";
-  button.textContent = "Manage Subjects";
-  button.addEventListener("click", openContactSubjectManager);
-  row.appendChild(button);
-  header.appendChild(row);
+  document.querySelector(".admin-contact-subjects-inline")?.remove();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  await fetchSubjectRows();
   renderSubjectOptions();
   ensureContactSubjectManager();
   insertContactSubjectButton();

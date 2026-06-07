@@ -1,6 +1,7 @@
 import { getTable } from "./db.js";
 import { DB_BASE, SUPABASE_CONFIG, getStorage } from "./config.js";
 import { addEditButton, openEditor } from "./editor-tools.js";
+import { createCircularSlider } from "../../components/circular-slider.js";
 
 const HEADERS = {
   apikey: SUPABASE_CONFIG.key,
@@ -10,6 +11,7 @@ const HEADERS = {
 
 let connectionRows = [];
 let connectionCategoryRows = [];
+const ALL_CATEGORY = "all";
 
 document.addEventListener("DOMContentLoaded", loadConnections);
 
@@ -30,6 +32,138 @@ async function loadConnections() {
 
 function prettifyCategory(category) {
   return String(category || "").replaceAll("_", " ");
+}
+
+function normalizeCategory(category) {
+  return String(category || "").trim().toLowerCase();
+}
+
+function parsePriorityArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+  }
+
+  const normalized = String(value || "").trim();
+  if (!normalized) return [];
+
+  if (normalized.startsWith("[")) {
+    try {
+      return parsePriorityArray(JSON.parse(normalized));
+    } catch (error) {
+      console.warn("Failed to parse priority JSON array:", error);
+    }
+  }
+
+  return normalized
+    .replace(/^\[|\]$/g, "")
+    .replace(/^\{|\}$/g, "")
+    .split(",")
+    .map((item) => Number(item.replace(/"/g, "").trim()))
+    .filter((item) => Number.isFinite(item));
+}
+
+function stringifyPriorityArray(value) {
+  return parsePriorityArray(value).join(", ");
+}
+
+function getCategoryPriority(categoryRows, category) {
+  const row = categoryRows.find((item) => normalizeCategory(item.category) === normalizeCategory(category));
+  return parsePriorityArray(row?.priority);
+}
+
+function sortRowsByPriority(rows, categoryRows, category) {
+  const priorityIds = getCategoryPriority(categoryRows, category);
+  const priorityIndex = new Map(priorityIds.map((id, index) => [Number(id), index]));
+  const prioritized = [];
+  const remaining = [];
+
+  rows.forEach((row) => {
+    const rowId = Number(row.id);
+    if (priorityIndex.has(rowId)) prioritized.push(row);
+    else remaining.push(row);
+  });
+
+  prioritized.sort((a, b) => priorityIndex.get(Number(a.id)) - priorityIndex.get(Number(b.id)));
+  return [...prioritized, ...remaining];
+}
+
+function copyText(value) {
+  if (!value) return;
+  navigator.clipboard?.writeText(String(value)).catch(() => {});
+}
+
+function buildConnectionPriorityGroups(category) {
+  const normalized = normalizeCategory(category);
+  const rows = getVisibleConnectionRows(connectionRows);
+
+  if (!normalized || normalized === ALL_CATEGORY) {
+    return connectionCategoryRows
+      .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
+      .map((row) => ({
+        title: row.label || prettifyCategory(row.category),
+        items: sortRowsByPriority(
+          rows.filter((item) => normalizeCategory(item.category) === normalizeCategory(row.category)),
+          connectionCategoryRows,
+          row.category
+        )
+      }))
+      .filter((group) => group.items.length);
+  }
+
+  return [{
+    title: prettifyCategory(category),
+    items: sortRowsByPriority(
+      rows.filter((item) => normalizeCategory(item.category) === normalized),
+      connectionCategoryRows,
+      category
+    )
+  }];
+}
+
+function mountConnectionPriorityHelper(fieldsContainer, getCategoryValue) {
+  fieldsContainer.classList.add("admin-editor-fields--split");
+
+  let helper = fieldsContainer.querySelector(".admin-priority-helper");
+  if (!helper) {
+    helper = document.createElement("aside");
+    helper.className = "admin-priority-helper";
+    fieldsContainer.appendChild(helper);
+  }
+
+  const render = () => {
+    const category = getCategoryValue()?.trim() || ALL_CATEGORY;
+    const groups = buildConnectionPriorityGroups(category);
+
+    helper.innerHTML = `
+      <div class="admin-priority-helper-header">
+        <h4>Reference IDs</h4>
+        <p>${normalizeCategory(category) === ALL_CATEGORY ? "All categories" : prettifyCategory(category)}</p>
+      </div>
+      <div class="admin-priority-helper-groups">
+        ${groups.length ? groups.map((group) => `
+          <section class="admin-priority-helper-group">
+            <h5>${group.title}</h5>
+            ${group.items.map((item) => `
+              <div class="admin-priority-helper-item">
+                <div>
+                  <strong>${item.name || "Unnamed Connection"}</strong>
+                  <span>ID: ${item.id}</span>
+                </div>
+                <button type="button" class="admin-project-manager-btn" data-copy-id="${item.id}">Copy</button>
+              </div>
+            `).join("")}
+          </section>
+        `).join("") : `<p class="admin-priority-helper-empty">No matching connections yet.</p>`}
+      </div>
+    `;
+
+    helper.querySelectorAll("[data-copy-id]").forEach((button) => {
+      button.addEventListener("click", () => copyText(button.dataset.copyId));
+    });
+  };
+
+  render();
+  return render;
 }
 
 function isRealConnection(row) {
@@ -60,7 +194,7 @@ function getVisibleConnectionRows(rows) {
 
 function getCategoryOptions(rows) {
   return connectionCategoryRows
-    .filter((row) => row.category)
+    .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
     .map((row) => ({
       value: row.category,
       label: row.label || prettifyCategory(row.category)
@@ -217,7 +351,7 @@ function renderConnectionsPage(rows) {
   }
 
   const categories = getCategoryOptions(rows);
-  const visibleRows = getVisibleConnectionRows(rows);
+  const visibleRows = sortRowsByPriority(getVisibleConnectionRows(rows), connectionCategoryRows, ALL_CATEGORY);
 
   filterList.innerHTML = `
     <li class="filter-item">
@@ -282,8 +416,14 @@ function renderConnectionsPage(rows) {
     });
   });
 
-  projectList.querySelectorAll(".project-item").forEach((item) => {
-    item.style.display = "block";
+  projectList.querySelectorAll("[data-filter-item]").forEach((item) => {
+    item.setAttribute("data-slider-active", "true");
+  });
+
+  const slider = createCircularSlider(projectList, {
+    desktop: 3,
+    mobile: 1,
+    selector: "[data-filter-item]"
   });
 
   const filterButtonsElements = article.querySelectorAll("[data-filter-btn]");
@@ -292,8 +432,24 @@ function renderConnectionsPage(rows) {
       const category = this.getAttribute("data-filter-btn");
 
       article.querySelectorAll("[data-filter-item]").forEach((item) => {
-        item.style.display = category === "all" || item.getAttribute("data-category") === category ? "block" : "none";
+        const isVisible = category === "all" || item.getAttribute("data-category") === category;
+        item.setAttribute("data-slider-active", isVisible ? "true" : "false");
       });
+
+      const sortedRows = category === ALL_CATEGORY
+        ? sortRowsByPriority(getVisibleConnectionRows(rows), connectionCategoryRows, ALL_CATEGORY)
+        : sortRowsByPriority(
+            rows.filter((row) => normalizeCategory(row.category) === normalizeCategory(category) && isRealConnection(row)),
+            connectionCategoryRows,
+            category
+          );
+
+      sortedRows.forEach((row) => {
+        const item = projectList.querySelector(`[data-row-id="${row.id}"]`);
+        if (item) projectList.appendChild(item);
+      });
+
+      slider?.refresh(true);
 
       filterButtonsElements.forEach((btn) => btn.classList.remove("active"));
       this.classList.add("active");
@@ -302,6 +458,10 @@ function renderConnectionsPage(rows) {
 
   const selectButtons = article.querySelectorAll("[data-select-item]");
   const dropdownMenu = document.getElementById("select-list");
+  const selectValue = article.querySelector("[data-select-value]");
+  if (selectValue) {
+    selectValue.textContent = "All";
+  }
   selectButtons.forEach((button) => {
     button.addEventListener("click", function () {
       const category = this.getAttribute("data-select-item");
@@ -319,6 +479,9 @@ function renderConnectionsPage(rows) {
       dropdownMenu.style.display = "none";
     });
   });
+
+  const defaultAllButton = article.querySelector('[data-filter-btn="all"]');
+  defaultAllButton?.click();
 }
 
 function openAddConnectionEditor() {
@@ -379,12 +542,19 @@ function openAddConnectionCategoryEditor() {
     title: "Add Connection Category",
     method: "POST",
     fields: [
-      { name: "category", label: "Category Name", value: "" }
+      { name: "category", label: "Category Name", value: "" },
+      { name: "priority", label: "Priority IDs", value: "", type: "textarea" }
     ],
+    onOpen: ({ form, fieldsContainer }) => {
+      const categoryInput = form.querySelector('[name="category"]');
+      const rerender = mountConnectionPriorityHelper(fieldsContainer, () => categoryInput?.value);
+      categoryInput?.addEventListener("input", rerender);
+    },
     onBack: openConnectionsManager,
     transformPayload: ({ payload }) => ({
       category: payload.category?.trim() || null,
-      label: prettifyCategory(payload.category?.trim() || "")
+      label: prettifyCategory(payload.category?.trim() || ""),
+      priority: parsePriorityArray(payload.priority)
     })
   });
 }
@@ -400,12 +570,20 @@ function openEditConnectionCategoryEditor(category) {
     method: "PATCH",
     fields: [
       { name: "old_category", label: "Current Category", value: category },
-      { name: "new_category", label: "New Category Name", value: category }
+      { name: "new_category", label: "New Category Name", value: category },
+      { name: "priority", label: "Priority IDs", value: stringifyPriorityArray(categoryRow.priority), type: "textarea" }
     ],
+    onOpen: ({ form, fieldsContainer }) => {
+      const oldInput = form.querySelector('[name="old_category"]');
+      const newInput = form.querySelector('[name="new_category"]');
+      const rerender = mountConnectionPriorityHelper(fieldsContainer, () => newInput?.value || oldInput?.value);
+      newInput?.addEventListener("input", rerender);
+    },
     onBack: openConnectionsManager,
     transformPayload: ({ payload }) => ({
       old_category: payload.old_category?.trim(),
-      new_category: payload.new_category?.trim()
+      new_category: payload.new_category?.trim(),
+      priority: parsePriorityArray(payload.priority)
     }),
     submitHandler: async ({ payload }) => {
       const categoryResponse = await fetch(`${DB_BASE}/connection_category?id=eq.${encodeURIComponent(categoryRow.id)}`, {
@@ -416,7 +594,8 @@ function openEditConnectionCategoryEditor(category) {
         },
         body: JSON.stringify({
           category: payload.new_category,
-          label: prettifyCategory(payload.new_category)
+          label: prettifyCategory(payload.new_category),
+          priority: payload.priority
         })
       });
 
@@ -560,17 +739,25 @@ function renderConnectionsManager() {
     return;
   }
 
-  const categories = getCategoryOptions(connectionRows);
+  const categories = connectionCategoryRows
+    .filter((row) => row.category)
+    .map((row) => ({
+      value: row.category,
+      label: row.label || prettifyCategory(row.category)
+    }));
   const visibleRows = getVisibleConnectionRows(connectionRows);
 
   categoryList.innerHTML = categories.length ? "" : `<div class="admin-project-manager-empty">No categories yet.</div>`;
   categories.forEach(({ value, label }) => {
+    const categoryRow = connectionCategoryRows.find((row) => row.category === value);
+    const priorityText = stringifyPriorityArray(categoryRow?.priority);
     const card = document.createElement("div");
     card.className = "admin-project-category-card";
     card.innerHTML = `
       <div>
         <strong>${label}</strong>
         <span>${connectionRows.filter((row) => row.category === value && isRealConnection(row)).length} connection(s)</span>
+        <span>${priorityText ? `Priority: ${priorityText}` : "Priority: None"}</span>
       </div>
       <div class="admin-project-card-actions">
         <button type="button" class="admin-project-manager-btn" data-action="edit-category">Edit Category</button>

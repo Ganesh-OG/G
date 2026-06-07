@@ -1,6 +1,8 @@
 import { getTable } from "./db.js";
 import { getStorage, DB_BASE, SUPABASE_CONFIG } from "./config.js";
-import { openEditor } from "./editor-tools.js";
+import { openEditor, closeEditor } from "./editor-tools.js";
+import { createCircularSlider } from "../../components/circular-slider.js";
+import { openProjectPopup } from "../../components/project-popup.js";
 
 const HEADERS = {
   apikey: SUPABASE_CONFIG.key,
@@ -10,10 +12,437 @@ const HEADERS = {
 
 let projectRows = [];
 let projectCategoryRows = [];
+const ALL_CATEGORY = "all";
+
+function normalizeCategory(category) {
+  return String(category || "").trim().toLowerCase();
+}
+
+function normalizeProjectAction(project = {}) {
+  const preferredAction = String(project?.project_type || project?.action_type || "redirect")
+    .trim()
+    .toLowerCase();
+
+  if (preferredAction === "file") return "file";
+  if (preferredAction === "popup") return "popup";
+  return "redirect";
+}
+
+function normalizeOrderKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeKeyLetters(value = "", fallback = "A") {
+  const lettersOnly = String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+  return lettersOnly || String(fallback || "A").toUpperCase().replace(/[^A-Z]/g, "") || "A";
+}
+
+function normalizeKeyDigits(value = "", fallback = "001") {
+  const digitsOnly = String(value || "").replace(/\D/g, "");
+  return digitsOnly || String(fallback || "001").replace(/\D/g, "") || "001";
+}
+
+function getOrderKeyParts(value) {
+  const normalized = normalizeOrderKey(value);
+  const match = normalized.match(/^([a-z]*?)(\d+)$/i);
+
+  if (match) {
+    return {
+      raw: normalized,
+      prefix: match[1].toLowerCase(),
+      number: Number(match[2]),
+      hasNumber: true
+    };
+  }
+
+  return {
+    raw: normalized,
+    prefix: normalized,
+    number: Number.POSITIVE_INFINITY,
+    hasNumber: false
+  };
+}
+
+function formatOrderKey(prefix, number, width = 3) {
+  const normalizedPrefix = String(prefix || "").trim().toUpperCase();
+  const paddedWidth = Math.max(Number(width) || 0, 3);
+  return `${normalizedPrefix}${String(number).padStart(paddedWidth, "0")}`;
+}
+
+function compareOrderKeys(left, right) {
+  const leftParts = getOrderKeyParts(left);
+  const rightParts = getOrderKeyParts(right);
+
+  if (leftParts.hasNumber && rightParts.hasNumber && leftParts.number !== rightParts.number) {
+    return leftParts.number - rightParts.number;
+  }
+
+  if (leftParts.hasNumber !== rightParts.hasNumber) {
+    return leftParts.hasNumber ? -1 : 1;
+  }
+
+  if (leftParts.prefix !== rightParts.prefix) {
+    return leftParts.prefix.localeCompare(rightParts.prefix);
+  }
+
+  return leftParts.raw.localeCompare(rightParts.raw);
+}
+
+function getNextOrderKey(rows, fieldName, prefix, fallbackWidth = 3) {
+  const normalizedPrefix = String(prefix || "").trim().toLowerCase() || "a";
+  const matchingRows = rows.filter((row) => normalizeOrderKey(row?.[fieldName]).startsWith(normalizedPrefix));
+  const width = matchingRows.reduce((maxWidth, row) => {
+    const parts = getOrderKeyParts(row?.[fieldName]);
+    return parts.hasNumber && parts.prefix === normalizedPrefix
+      ? Math.max(maxWidth, String(Math.trunc(parts.number)).length)
+      : maxWidth;
+  }, Math.max(Number(fallbackWidth) || 3, 3));
+  const maxNumber = matchingRows.reduce((max, row) => {
+    const parts = getOrderKeyParts(row?.[fieldName]);
+    if (!parts.hasNumber || parts.prefix !== normalizedPrefix) return max;
+    return Math.max(max, parts.number);
+  }, 0);
+
+  return formatOrderKey(normalizedPrefix, maxNumber + 1, width);
+}
+
+function getCategoryLetterSeed(categoryName = "") {
+  const match = String(categoryName || "")
+    .trim()
+    .toUpperCase()
+    .match(/[A-Z]/);
+  return match ? match[0] : "A";
+}
+
+function getCategoryKeyLetter(categoryName = "") {
+  const row = projectCategoryRows.find((item) => normalizeCategory(item.category) === normalizeCategory(categoryName));
+  return String(row?.Category_Key_letter || row?.category_key || "").trim().toUpperCase();
+}
+
+function getCategorySortKey(row = {}) {
+  const keyValue =
+    row?.Priority_key ??
+    row?.priority_key ??
+    row?.category_key ??
+    row?.Category_Key_letter ??
+    row?.label ??
+    row?.category ??
+    "";
+
+  return String(keyValue).trim().toUpperCase();
+}
+
+function ensureCategoryLetter(categoryName = "", existingLetter = "") {
+  const normalizedExisting = normalizeKeyLetters(existingLetter, "");
+  if (normalizedExisting) return normalizedExisting;
+  return getCategoryLetterSeed(categoryName);
+}
+
+function parsePriorityArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+  }
+
+  const normalized = String(value || "").trim();
+  if (!normalized) return [];
+
+  if (normalized.startsWith("[")) {
+    try {
+      return parsePriorityArray(JSON.parse(normalized));
+    } catch (error) {
+      console.warn("Failed to parse priority JSON array:", error);
+    }
+  }
+
+  return normalized
+    .replace(/^\[|\]$/g, "")
+    .replace(/^\{|\}$/g, "")
+    .split(",")
+    .map((item) => Number(item.replace(/"/g, "").trim()))
+    .filter((item) => Number.isFinite(item));
+}
+
+function stringifyPriorityArray(value) {
+  return parsePriorityArray(value).join(", ");
+}
+
+function getCategoryPriority(categoryRows, category) {
+  const row = categoryRows.find((item) => normalizeCategory(item.category) === normalizeCategory(category));
+  return parsePriorityArray(row?.priority);
+}
+
+function sortProjectsByPriority(rows, categoryRows, category, orderField = "all_Key") {
+  const priorityIds = getCategoryPriority(categoryRows, category);
+  const priorityIndex = new Map(priorityIds.map((id, index) => [Number(id), index]));
+  return [...rows].sort((a, b) => {
+    const keyComparison = compareOrderKeys(a?.[orderField], b?.[orderField]);
+    if (keyComparison !== 0) return keyComparison;
+
+    const aPriority = priorityIndex.has(Number(a?.id));
+    const bPriority = priorityIndex.has(Number(b?.id));
+
+    if (aPriority && bPriority) {
+      return priorityIndex.get(Number(a.id)) - priorityIndex.get(Number(b.id));
+    }
+
+    if (aPriority !== bPriority) {
+      return aPriority ? -1 : 1;
+    }
+
+    return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function sortCategoriesByKey(rows) {
+  return [...rows].sort((a, b) => {
+    const aPriority = Number(a?.Priority_key ?? a?.priority_key);
+    const bPriority = Number(b?.Priority_key ?? b?.priority_key);
+
+    if (Number.isFinite(aPriority) && Number.isFinite(bPriority) && aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+
+    if (Number.isFinite(aPriority) !== Number.isFinite(bPriority)) {
+      return Number.isFinite(aPriority) ? -1 : 1;
+    }
+
+    const keyComparison = compareOrderKeys(getCategorySortKey(a), getCategorySortKey(b));
+    if (keyComparison !== 0) return keyComparison;
+
+    return String(a?.label || a?.category || "").localeCompare(String(b?.label || b?.category || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function ensureProjectKey(existingKey = "", rows = projectRows) {
+  const normalizedExisting = String(existingKey || "").trim();
+  if (normalizedExisting) return normalizedExisting;
+  return getNextOrderKey(rows, "all_Key", "a");
+}
+
+function ensureCategoryProjectKey(categoryName = "", existingKey = "", rows = projectRows) {
+  const normalizedExisting = String(existingKey || "").trim();
+  if (normalizedExisting) return normalizedExisting;
+  const categoryLetter = getCategoryKeyLetter(categoryName) || getCategoryLetterSeed(categoryName);
+  const scopedRows = rows.filter((row) => normalizeCategory(row.category) === normalizeCategory(categoryName));
+  return getNextOrderKey(scopedRows, "category_key", categoryLetter);
+}
+
+async function updateProjectCategoryKeysForCategory(oldCategory, newCategory, newCategoryLetter) {
+  const scopedProjects = projectRows.filter(
+    (project) => project.name && normalizeCategory(project.category) === normalizeCategory(oldCategory)
+  );
+
+  if (!scopedProjects.length) return;
+
+  const orderedProjects = sortProjectsByPriority(scopedProjects, projectCategoryRows, oldCategory, "category_key");
+  const updates = orderedProjects.map((project, index) => {
+    const keyParts = getOrderKeyParts(project.category_key);
+    const numericPart = keyParts.hasNumber ? keyParts.number : (index + 1);
+    const width = keyParts.hasNumber ? Math.max(String(Math.trunc(keyParts.number)).length, 3) : 3;
+
+    return fetch(`${DB_BASE}/projects?id=eq.${encodeURIComponent(project.id)}`, {
+      method: "PATCH",
+      headers: {
+        ...HEADERS,
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        category: newCategory,
+        category_key: formatOrderKey(newCategoryLetter, numericPart, width)
+      })
+    });
+  });
+
+  await Promise.all(updates);
+}
+
+function getAllProjectKeyPrefix() {
+  const orderedProjects = sortProjectsByPriority(
+    projectRows.filter((project) => project.name),
+    projectCategoryRows,
+    ALL_CATEGORY,
+    "all_Key"
+  );
+  const firstKey = orderedProjects[0]?.all_Key || orderedProjects[0]?.all_key || "";
+  const parts = getOrderKeyParts(firstKey);
+  return (parts.prefix || "a").toUpperCase();
+}
+
+async function updateAllProjectKeys(nextPrefix) {
+  const normalizedPrefix = String(nextPrefix || "").trim().toUpperCase();
+  if (!normalizedPrefix) {
+    throw new Error("All key prefix is required.");
+  }
+
+  const orderedProjects = sortProjectsByPriority(
+    projectRows.filter((project) => project.name),
+    projectCategoryRows,
+    ALL_CATEGORY,
+    "all_Key"
+  );
+
+  const changes = orderedProjects
+    .map((project, index) => {
+      const currentKey = String(project.all_Key || project.all_key || "").trim();
+      const keyParts = getOrderKeyParts(currentKey);
+      const numericPart = keyParts.hasNumber ? keyParts.number : (index + 1);
+      const width = keyParts.hasNumber ? Math.max(String(Math.trunc(keyParts.number)).length, 3) : 3;
+      const nextKey = formatOrderKey(normalizedPrefix, numericPart, width);
+
+      if (nextKey === currentKey) return null;
+
+      return {
+        project,
+        currentKey,
+        nextKey
+      };
+    })
+    .filter(Boolean);
+
+  if (!changes.length) return;
+
+  const projectUpdates = changes.map((change) => fetch(`${DB_BASE}/projects?id=eq.${encodeURIComponent(change.project.id)}`, {
+    method: "PATCH",
+    headers: {
+      ...HEADERS,
+      Prefer: "return=representation"
+    },
+    body: JSON.stringify({
+      all_Key: change.nextKey
+    })
+  }));
+
+  const results = await Promise.all(projectUpdates);
+  const failed = results.find((response) => response && response.ok === false);
+
+  if (failed) {
+    const errorText = await failed.text();
+    throw new Error(errorText || "Failed to update All keys.");
+  }
+}
+
+function bindLettersOnlyInput(input, fallbackValue = "A") {
+  if (!input) return;
+
+  const syncValue = () => {
+    const normalized = normalizeKeyLetters(input.value, fallbackValue);
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  };
+
+  input.setAttribute("inputmode", "text");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("spellcheck", "false");
+  input.addEventListener("input", syncValue);
+  input.addEventListener("blur", syncValue);
+  syncValue();
+}
+
+function bindDigitsOnlyInput(input, fallbackValue = "001") {
+  if (!input) return;
+
+  const syncValue = () => {
+    const normalized = normalizeKeyDigits(input.value, fallbackValue);
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  };
+
+  input.setAttribute("inputmode", "numeric");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("spellcheck", "false");
+  input.addEventListener("input", syncValue);
+  input.addEventListener("blur", syncValue);
+  syncValue();
+}
+
+function copyText(value) {
+  if (!value) return;
+  navigator.clipboard?.writeText(String(value)).catch(() => {});
+}
+
+function buildProjectPriorityGroups(category) {
+  const normalized = normalizeCategory(category);
+  const rows = projectRows.filter((project) => project.name);
+
+  if (!normalized || normalized === ALL_CATEGORY) {
+    return projectCategoryRows
+      .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
+      .map((row) => ({
+        title: row.label || row.category,
+        items: sortProjectsByPriority(
+          rows.filter((item) => normalizeCategory(item.category) === normalizeCategory(row.category)),
+          projectCategoryRows,
+          row.category,
+          "category_key"
+        )
+      }))
+      .filter((group) => group.items.length);
+  }
+
+  return [{
+    title: category,
+    items: sortProjectsByPriority(
+      rows.filter((item) => normalizeCategory(item.category) === normalized),
+      projectCategoryRows,
+      category,
+      "category_key"
+    )
+  }];
+}
+
+function mountProjectPriorityHelper(fieldsContainer, getCategoryValue) {
+  fieldsContainer.classList.add("admin-editor-fields--split");
+
+  let helper = fieldsContainer.querySelector(".admin-priority-helper");
+  if (!helper) {
+    helper = document.createElement("aside");
+    helper.className = "admin-priority-helper";
+    fieldsContainer.appendChild(helper);
+  }
+
+  const render = () => {
+    const category = getCategoryValue()?.trim() || ALL_CATEGORY;
+    const groups = buildProjectPriorityGroups(category);
+
+    helper.innerHTML = `
+      <div class="admin-priority-helper-header">
+        <h4>Reference IDs</h4>
+        <p>${normalizeCategory(category) === ALL_CATEGORY ? "All categories" : category}</p>
+      </div>
+      <div class="admin-priority-helper-groups">
+        ${groups.length ? groups.map((group) => `
+          <section class="admin-priority-helper-group">
+            <h5>${group.title}</h5>
+            ${group.items.map((item) => `
+              <div class="admin-priority-helper-item">
+                <div>
+                  <strong>${item.name || "Untitled Project"}</strong>
+                  <span>ID: ${item.id}</span>
+                </div>
+                <button type="button" class="admin-project-manager-btn" data-copy-id="${item.id}">Copy</button>
+              </div>
+            `).join("")}
+          </section>
+        `).join("") : `<p class="admin-priority-helper-empty">No matching projects yet.</p>`}
+      </div>
+    `;
+
+    helper.querySelectorAll("[data-copy-id]").forEach((button) => {
+      button.addEventListener("click", () => copyText(button.dataset.copyId));
+    });
+  };
+
+  render();
+  return render;
+}
 
 function getProjectCategoryOptions() {
-  return projectCategoryRows
-    .filter((row) => row.category)
+  return sortCategoriesByKey(projectCategoryRows)
+    .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
     .map((row) => ({
       value: row.category,
       label: row.label || row.category
@@ -33,7 +462,8 @@ async function ensureProjectCategoryExists(category) {
     },
     body: JSON.stringify({
       category,
-      label: category
+      label: category,
+      Category_Key_letter: ensureCategoryLetter(category)
     })
   });
 }
@@ -42,12 +472,12 @@ async function populateProjects() {
 
   try {
 
-    const [rows, categories] = await Promise.all([
+    const [rows, categoryRows] = await Promise.all([
       getTable("projects"),
       getTable("project_category")
     ]);
     projectRows = rows;
-    projectCategoryRows = categories;
+    projectCategoryRows = categoryRows;
 
     const modalContainer = document.querySelector('[data-modal-container]');
     if (!modalContainer) {
@@ -59,7 +489,9 @@ async function populateProjects() {
     newContent.className = 'projects';
 
     newContent.innerHTML = `
-      <ul class="filter-list"></ul>
+      <div class="admin-project-filter-row">
+        <ul class="filter-list"></ul>
+      </div>
 
       <div class="filter-select-box">
         <button class="filter-select" project-select>
@@ -84,7 +516,7 @@ async function populateProjects() {
 
     const fallbackImageUrl = getStorage("Projects", "404.gif");
 
-    const categories = getProjectCategoryOptions();
+    const categoryOptions = getProjectCategoryOptions();
 
     const managerWrap = document.createElement("div");
     managerWrap.className = "admin-project-manager-launch";
@@ -95,7 +527,7 @@ async function populateProjects() {
         </span>
       </button>
     `;
-    newContent.prepend(managerWrap);
+    newContent.querySelector(".admin-project-filter-row")?.appendChild(managerWrap);
     ensureProjectManagerModal();
     managerWrap.querySelector("button").addEventListener("click", openProjectManager);
 
@@ -114,7 +546,7 @@ async function populateProjects() {
       </li>
     `;
 
-    categories.forEach(({ value, label }) => {
+    categoryOptions.forEach(({ value, label }) => {
 
       filterList.innerHTML += `
         <li class="filter-item">
@@ -130,7 +562,7 @@ async function populateProjects() {
 
     });
 
-    rows.forEach(project => {
+    sortProjectsByPriority(rows.filter((project) => project.name), projectCategoryRows, ALL_CATEGORY).forEach(project => {
 
       if (!project.name) return;
 
@@ -140,10 +572,12 @@ async function populateProjects() {
       projectItem.className = 'project-item';
       projectItem.setAttribute('project-filter-item', '');
       projectItem.setAttribute('data-category', formattedCategory);
+      projectItem.setAttribute('data-row-id', project.id);
 
       // ✅ NEW DATA ATTRIBUTES
-      projectItem.dataset.action = project.action_type?.toLowerCase();
-      projectItem.dataset.key = project.project_key;
+      projectItem.dataset.action = normalizeProjectAction(project);
+      projectItem.dataset.key = project.all_Key || project.all_key || project.project_key;
+      projectItem.dataset.fileName = project.project_file_name || project.file || "";
       projectItem.dataset.url = project.link;
 
       let imageUrl = project.file
@@ -193,7 +627,17 @@ async function populateProjects() {
 
     });
 
-    attachEventListeners(newContent);
+    projectList.querySelectorAll("[project-filter-item]").forEach((item) => {
+      item.setAttribute("data-slider-active", "true");
+    });
+
+    const slider = createCircularSlider(projectList, {
+      desktop: 3,
+      mobile: 1,
+      selector: "[project-filter-item]"
+    });
+
+    attachEventListeners(newContent, slider);
 
   }
 
@@ -206,13 +650,14 @@ async function populateProjects() {
 // =============================
 // EVENTS + FILTER + CLICK
 // =============================
-function attachEventListeners(container) {
+function attachEventListeners(container, slider) {
 
   const projectSelect = container.querySelector("[project-select]");
   const projectSelectItems = container.querySelectorAll("[project-select-item]");
   const projectSelectValue = container.querySelector("[project-select-value]");
   const projectFilterBtn = container.querySelectorAll("[project-filter-btn]");
   const projectFilterItems = container.querySelectorAll("[project-filter-item]");
+  const projectList = container.querySelector(".project-list");
 
   // =============================
   // FILTER FUNCTION
@@ -221,13 +666,26 @@ function attachEventListeners(container) {
 
     projectFilterItems.forEach(item => {
 
-      if (selectedValue === "all" || selectedValue === item.dataset.category) {
-        item.style.display = 'block';
-      } else {
-        item.style.display = 'none';
-      }
+      const isVisible = selectedValue === "all" || selectedValue === item.dataset.category;
+      item.setAttribute("data-slider-active", isVisible ? "true" : "false");
 
     });
+
+    const sortedRows = selectedValue === ALL_CATEGORY
+      ? sortProjectsByPriority(projectRows.filter((project) => project.name), projectCategoryRows, ALL_CATEGORY)
+      : sortProjectsByPriority(
+          projectRows.filter((project) => project.name && normalizeCategory(project.category) === normalizeCategory(selectedValue)),
+          projectCategoryRows,
+          selectedValue,
+          "category_key"
+        );
+
+    sortedRows.forEach((project) => {
+      const item = projectList.querySelector(`[data-row-id="${project.id}"]`);
+      if (item) projectList.appendChild(item);
+    });
+
+    slider?.refresh(true);
 
   };
 
@@ -236,13 +694,7 @@ function attachEventListeners(container) {
   // =============================
   projectFilterFunc("all");
 
-  const isMobile = window.innerWidth <= 768;
-
-  if (isMobile) {
-    projectSelectValue.innerText = "Select category";
-  } else {
-    projectSelectValue.innerText = "All";
-  }
+  projectSelectValue.innerText = "All";
 
   // =============================
   // SELECT DROPDOWN
@@ -302,42 +754,46 @@ function attachEventListeners(container) {
   });
 
   // =============================
-  // CLICK HANDLER (POPUP / REDIRECT)
+  // CLICK HANDLER
   // =============================
   projectFilterItems.forEach(item => {
 
-    item.addEventListener("click", async function () {
+    item.addEventListener("click", async function (event) {
+      event.preventDefault();
+      event.stopPropagation();
 
       const action = this.dataset.action;
-      const key = this.dataset.key;
+      const fileName = this.dataset.fileName;
       const url = this.dataset.url;
+
+      if (action === "file") {
+        await openProjectPopup({
+          title: this.querySelector(".project-title")?.textContent?.trim(),
+          fileName
+        });
+        return;
+      }
 
       if (action === "redirect" && url) {
         window.open(url, "_blank");
         return;
       }
 
-      if (action === "popup" && key) {
-
-        const popup = document.getElementById("popup");
-        const content = document.getElementById("popup-content");
-
-        popup.style.display = "block";
-        content.innerHTML = "Loading...";
-
+      if (action === "popup" && this.dataset.key) {
         try {
           const { data, error } = await window.supabase
             .from("project_details")
             .select("content")
-            .eq("project_key", key)
+            .eq("project_key", this.dataset.key)
             .single();
 
           if (error) throw error;
-
-          content.innerHTML = data.content;
+          openProjectPopup({
+            title: this.querySelector(".project-title")?.textContent?.trim(),
+            bundle: parseProjectDetailBundle(data.content)
+          });
 
         } catch (err) {
-          content.innerHTML = "Error loading project";
           console.error(err);
         }
       }
@@ -350,13 +806,7 @@ function attachEventListeners(container) {
   // OPTIONAL: HANDLE RESIZE
   // =============================
   window.addEventListener("resize", () => {
-    const isMobile = window.innerWidth <= 768;
-
-    if (isMobile) {
-      projectSelectValue.innerText = "Select category";
-    } else {
-      projectSelectValue.innerText = "All";
-    }
+    projectSelectValue.innerText = "All";
   });
 
 }
@@ -365,9 +815,18 @@ function getProjectCategories() {
   return getProjectCategoryOptions().map((item) => item.value);
 }
 
+function openProjectEditorFromManager(project = null) {
+  openProjectEditor(project);
+  window.setTimeout(() => {
+    closeProjectManager();
+  }, 0);
+}
+
 function openProjectEditor(project, forcedCategory = "") {
   const categories = getProjectCategories();
   const initialCategory = forcedCategory || project?.category || categories[0] || "";
+  const initialAllKey = ensureProjectKey(project?.all_Key || project?.all_key);
+  const initialCategoryKey = ensureCategoryProjectKey(initialCategory, project?.category_key);
 
   openEditor({
     table: "projects",
@@ -379,56 +838,102 @@ function openProjectEditor(project, forcedCategory = "") {
         name: "category_select",
         label: "Category",
         type: "select",
-        value: initialCategory || "custom",
-        options: [
-          ...getProjectCategoryOptions(),
-          { value: "custom", label: "Add New Category" }
-        ]
+        value: initialCategory,
+        options: getProjectCategoryOptions()
       },
-      { name: "category", label: "Category Name", value: initialCategory },
+      {
+        name: "all_Key",
+        label: "All Key",
+        value: initialAllKey,
+        placeholder: "A001, A002, A003...",
+        helpText: "This controls the order in the All projects list. We auto-fill the next available key when the field is blank."
+      },
+      {
+        name: "category_key",
+        label: "Category Key",
+        value: initialCategoryKey,
+        placeholder: "W001, W002, W003...",
+        helpText: "This controls the order inside the selected category. We auto-fill from the category's key prefix."
+      },
       { name: "name", value: project?.name || "" },
       { name: "project_date", value: project?.project_date || "" },
       { name: "description", value: project?.description || "", type: "textarea" },
       { name: "file", value: project?.file || "", type: "image", storageFolder: "Projects" },
       {
-        name: "action_type",
-        label: "Action Type",
+        name: "project_type",
+        label: "Project Type",
         type: "select",
-        value: project?.action_type || "redirect",
+        value: project?.project_type || "website",
         options: [
-          { value: "redirect", label: "Redirect" },
-          { value: "popup", label: "Popup" }
+          { value: "website", label: "Website" },
+          { value: "file", label: "File" }
         ]
       },
-      { name: "project_key", value: project?.project_key || "" },
+      { name: "project_file_name", label: "JSON File Name", value: project?.project_file_name || "", placeholder: "Bulk_AD_User_Creation.json" },
       { name: "link", label: "Link", value: project?.link || "", type: "url" }
     ],
-    onOpen: ({ form }) => {
+    onOpen: ({ form, fieldsContainer }) => {
       const categorySelect = form.querySelector('[name="category_select"]');
-      const categoryInput = form.querySelector('[name="category"]');
+      const allKeyInput = form.querySelector('[name="all_Key"]');
+      const categoryKeyInput = form.querySelector('[name="category_key"]');
+      const syncProjectKeys = () => {
+        if (allKeyInput) {
+          const isAllKeyAuto = allKeyInput.dataset.autofilled !== "false";
+          if (!String(allKeyInput.value || "").trim() || isAllKeyAuto) {
+            allKeyInput.value = ensureProjectKey("");
+            allKeyInput.dataset.autofilled = "true";
+          }
+        }
+
+        if (categoryKeyInput) {
+          const isCategoryKeyAuto = categoryKeyInput.dataset.autofilled !== "false";
+          if (!String(categoryKeyInput.value || "").trim() || isCategoryKeyAuto) {
+            categoryKeyInput.value = ensureCategoryProjectKey(categorySelect?.value || initialCategory, "");
+            categoryKeyInput.dataset.autofilled = "true";
+          }
+        }
+      };
 
       categorySelect?.addEventListener("change", () => {
-        if (categorySelect.value !== "custom") {
-          categoryInput.value = categorySelect.value;
-        } else if (getProjectCategories().includes(categoryInput.value)) {
-          categoryInput.value = "";
-        }
+        syncProjectKeys();
       });
+
+      if (allKeyInput) {
+        allKeyInput.dataset.autofilled = String(allKeyInput.value || "").trim() ? "false" : "true";
+        allKeyInput.addEventListener("input", () => {
+          allKeyInput.dataset.autofilled = "false";
+        });
+      }
+      if (categoryKeyInput) {
+        categoryKeyInput.dataset.autofilled = String(categoryKeyInput.value || "").trim() ? "false" : "true";
+        categoryKeyInput.addEventListener("input", () => {
+          categoryKeyInput.dataset.autofilled = "false";
+        });
+      }
+      syncProjectKeys();
     },
     onBack: openProjectManager,
-    transformPayload: ({ payload }) => ({
-      category: payload.category?.trim(),
-      name: payload.name?.trim(),
-      project_date: payload.project_date?.trim() || null,
-      description: payload.description?.trim() || null,
-      file: payload.file || null,
-      action_type: payload.action_type?.trim(),
-      project_key: payload.project_key?.trim() || null,
-      link: payload.link?.trim() || null
-    }),
+    transformPayload: ({ payload }) => {
+      const normalizedName = payload.name?.trim();
+      const normalizedAllKey = ensureProjectKey(payload.all_Key);
+      const normalizedCategoryKey = ensureCategoryProjectKey(payload.category_select, payload.category_key);
+
+      return {
+        category: payload.category_select?.trim(),
+        name: normalizedName,
+        project_date: payload.project_date?.trim() || null,
+        description: payload.description?.trim() || null,
+        file: payload.file || null,
+        project_type: payload.project_type || "website",
+        project_file_name: payload.project_file_name?.trim() || null,
+        all_Key: normalizedAllKey,
+        category_key: normalizedCategoryKey,
+        link: payload.link?.trim() || null
+      };
+    },
     submitHandler: async ({ table, rowId, method, payload, headers, dbBase }) => {
       await ensureProjectCategoryExists(payload.category);
-      return fetch(method === "POST" ? `${dbBase}/${table}` : `${dbBase}/${table}?id=eq.${encodeURIComponent(rowId)}`, {
+      const response = await fetch(method === "POST" ? `${dbBase}/${table}` : `${dbBase}/${table}?id=eq.${encodeURIComponent(rowId)}`, {
         method,
         headers: {
           ...headers,
@@ -436,12 +941,15 @@ function openProjectEditor(project, forcedCategory = "") {
         },
         body: JSON.stringify(payload)
       });
+
+      return response;
     }
   });
 }
 
 function openRenameCategoryEditor(category) {
   const categoryRow = projectCategoryRows.find((row) => row.category === category);
+  const initialCategoryKey = ensureCategoryLetter(category, categoryRow?.Category_Key_letter);
   openEditor({
     table: "project_category",
     row: categoryRow,
@@ -449,11 +957,32 @@ function openRenameCategoryEditor(category) {
     method: "PATCH",
     fields: [
       { name: "old_category", label: "Current Category", value: category },
-      { name: "new_category", label: "New Category Name", value: category }
+      { name: "new_category", label: "New Category Name", value: category },
+      {
+        name: "Category_Key_letter",
+        label: "Category Key Letter",
+        value: initialCategoryKey,
+        placeholder: "A, W, PS...",
+        helpText: "This is the category prefix used for category ordering and project key grouping."
+      }
     ],
+    onOpen: ({ form, fieldsContainer }) => {
+      const newInput = form.querySelector('[name="new_category"]');
+      const keyInput = form.querySelector('[name="Category_Key_letter"]');
+      const syncKey = () => {
+        if (keyInput && !String(keyInput.value || "").trim()) {
+          keyInput.value = ensureCategoryLetter(newInput?.value || category, keyInput.value);
+        }
+      };
+
+      newInput?.addEventListener("input", syncKey);
+      bindLettersOnlyInput(keyInput, ensureCategoryLetter(category, ""));
+      syncKey();
+    },
     transformPayload: ({ payload }) => ({
       old_category: payload.old_category?.trim(),
-      new_category: payload.new_category?.trim()
+      new_category: payload.new_category?.trim(),
+      Category_Key_letter: normalizeKeyLetters(payload.Category_Key_letter, ensureCategoryLetter(payload.new_category, ""))
     }),
     onBack: openProjectManager,
     submitHandler: async ({ payload }) => {
@@ -465,7 +994,8 @@ function openRenameCategoryEditor(category) {
         },
         body: JSON.stringify({
           category: payload.new_category,
-          label: payload.new_category
+          label: payload.new_category,
+          Category_Key_letter: payload.Category_Key_letter
         })
       });
 
@@ -484,7 +1014,57 @@ function openRenameCategoryEditor(category) {
         })
       });
 
+      await updateProjectCategoryKeysForCategory(
+        payload.old_category,
+        payload.new_category,
+        payload.Category_Key_letter
+      );
+
       return categoryResponse;
+    }
+  });
+}
+
+function openEditAllKeysEditor() {
+  const initialAllKeyPrefix = getAllProjectKeyPrefix();
+
+  openEditor({
+    table: "projects",
+    title: "Edit All Project Keys",
+    method: "POST",
+    refreshMode: "close",
+    fields: [
+      { name: "current_all_key_prefix", label: "Current All Key Prefix", value: initialAllKeyPrefix },
+      {
+        name: "new_all_key_prefix",
+        label: "New All Key Prefix",
+        value: initialAllKeyPrefix,
+        placeholder: "A",
+        helpText: "This updates every project's All Key and keeps the numeric order."
+      }
+    ],
+    onOpen: ({ form }) => {
+      const currentInput = form.querySelector('[name="current_all_key_prefix"]');
+      const newInput = form.querySelector('[name="new_all_key_prefix"]');
+      currentInput?.setAttribute("readonly", "readonly");
+      currentInput?.setAttribute("tabindex", "-1");
+      bindLettersOnlyInput(newInput, initialAllKeyPrefix);
+      newInput?.focus();
+    },
+    transformPayload: ({ payload }) => ({
+      current_all_key_prefix: payload.current_all_key_prefix?.trim(),
+      new_all_key_prefix: normalizeKeyLetters(payload.new_all_key_prefix, initialAllKeyPrefix)
+    }),
+    submitHandler: async ({ payload }) => {
+      await updateAllProjectKeys(payload.new_all_key_prefix);
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    },
+    onSaved: () => {
+      window.location.reload();
     }
   });
 }
@@ -495,10 +1075,31 @@ function openAddCategoryFlow() {
     title: "Add New Category",
     method: "POST",
     fields: [
-      { name: "new_category", label: "Category Name", value: "" }
+      { name: "new_category", label: "Category Name", value: "" },
+      {
+        name: "Category_Key_letter",
+        label: "Category Key Letter",
+        value: "",
+        placeholder: "A, W, PS...",
+        helpText: "This is the category prefix used for category ordering and project key grouping."
+      }
     ],
+    onOpen: ({ form, fieldsContainer }) => {
+      const categoryInput = form.querySelector('[name="new_category"]');
+      const keyInput = form.querySelector('[name="Category_Key_letter"]');
+      const syncKey = () => {
+        if (keyInput && !String(keyInput.value || "").trim()) {
+          keyInput.value = ensureCategoryLetter(categoryInput?.value, keyInput.value);
+        }
+      };
+
+      categoryInput?.addEventListener("input", syncKey);
+      bindLettersOnlyInput(keyInput, "");
+      syncKey();
+    },
     transformPayload: ({ payload }) => ({
-      new_category: payload.new_category?.trim()
+      new_category: payload.new_category?.trim(),
+      Category_Key_letter: normalizeKeyLetters(payload.Category_Key_letter, ensureCategoryLetter(payload.new_category, ""))
     }),
     onBack: openProjectManager,
     submitHandler: async ({ payload }) => {
@@ -519,7 +1120,8 @@ function openAddCategoryFlow() {
         },
         body: JSON.stringify({
           category: categoryName,
-          label: categoryName
+          label: categoryName,
+          Category_Key_letter: payload.Category_Key_letter
         })
       });
     }
@@ -609,6 +1211,16 @@ function ensureProjectManagerModal() {
         <button type="button" class="admin-project-manager-add-category">Add Category</button>
         <button type="button" class="admin-project-manager-add-project">Add Project</button>
       </div>
+      <div class="admin-project-key-order">
+        <div class="admin-project-key-order-header">
+          <div>
+            <h4 class="admin-project-manager-subtitle">Key Order</h4>
+            <p>Category keys control category/filter order. All keys control the global project order.</p>
+          </div>
+          <button type="button" class="admin-project-manager-btn admin-project-key-order-save" data-save-key-order>Save Order</button>
+        </div>
+        <div class="admin-project-key-order-sections" data-key-order-sections></div>
+      </div>
       <div class="admin-project-manager-sections">
         <div>
           <h4 class="admin-project-manager-subtitle">Categories</h4>
@@ -632,34 +1244,131 @@ function ensureProjectManagerModal() {
 
   modal.querySelector(".admin-project-manager-add-category").addEventListener("click", () => {
     closeProjectManager();
-    openAddCategoryFlow();
+    window.setTimeout(() => {
+      openAddCategoryFlow();
+    }, 0);
   });
 
   modal.querySelector(".admin-project-manager-add-project").addEventListener("click", () => {
-    closeProjectManager();
-    openProjectEditor(null);
+    openProjectEditorFromManager(null);
+  });
+
+  modal.querySelector("[data-save-key-order]")?.addEventListener("click", async () => {
+    await saveKeyOrder(modal);
   });
 }
 
+async function saveKeyOrder(modal) {
+  const categoryInputs = Array.from(modal?.querySelectorAll('[data-order-input="project-category"]') || []);
+  const projectInputs = Array.from(modal?.querySelectorAll('[data-order-input="project"]') || []);
+  const updates = [];
+
+  categoryInputs.forEach((input) => {
+    const rowId = input.dataset.rowId;
+    const row = projectRows.find((item) => String(item.id) === String(rowId));
+    if (!row) return;
+
+    const currentKey = String(row.category_key || "").trim();
+    const currentParts = getOrderKeyParts(currentKey);
+    const prefix = String(input.dataset.keyPrefix || currentParts.prefix || "").trim().toUpperCase();
+    const width = Number(input.dataset.keyWidth || Math.max(String(Math.trunc(currentParts.number || 0) || 0).length, 3)) || 3;
+    const nextKey = formatOrderKey(prefix || currentParts.prefix || "A", normalizeKeyDigits(input.value, currentParts.hasNumber ? String(currentParts.number).padStart(width, "0") : "001"), width);
+
+    if (nextKey !== currentKey) {
+      updates.push(fetch(`${DB_BASE}/projects?id=eq.${encodeURIComponent(row.id)}`, {
+        method: "PATCH",
+        headers: {
+          ...HEADERS,
+          Prefer: "return=representation"
+        },
+        body: JSON.stringify({
+          category_key: nextKey
+        })
+      }));
+    }
+  });
+
+  projectInputs.forEach((input) => {
+    const rowId = input.dataset.rowId;
+    const row = projectRows.find((item) => String(item.id) === String(rowId));
+    if (!row) return;
+
+    const currentKey = String(row.all_Key || row.all_key || "").trim();
+    const currentParts = getOrderKeyParts(currentKey);
+    const prefix = String(input.dataset.keyPrefix || currentParts.prefix || "").trim().toUpperCase();
+    const width = Number(input.dataset.keyWidth || Math.max(String(Math.trunc(currentParts.number || 0) || 0).length, 3)) || 3;
+    const nextKey = formatOrderKey(prefix || currentParts.prefix || "A", normalizeKeyDigits(input.value, currentParts.hasNumber ? String(currentParts.number).padStart(width, "0") : "001"), width);
+
+    if (nextKey !== currentKey) {
+      updates.push(fetch(`${DB_BASE}/projects?id=eq.${encodeURIComponent(row.id)}`, {
+        method: "PATCH",
+        headers: {
+          ...HEADERS,
+          Prefer: "return=representation"
+        },
+        body: JSON.stringify({
+          all_Key: nextKey
+        })
+      }));
+    }
+  });
+
+  if (!updates.length) {
+    window.alert("No key changes to save.");
+    return;
+  }
+
+  const results = await Promise.all(updates);
+  const failed = results.find((response) => !response.ok);
+
+  if (failed) {
+    const errorText = await failed.text();
+    window.alert(`Failed to save key order.\n${errorText}`);
+    return;
+  }
+
+  window.location.reload();
+}
+
 function renderProjectManager() {
-  const categoryList = document.querySelector(".admin-project-category-list");
-  const projectList = document.querySelector(".admin-project-list-manager");
+  const modal = document.getElementById("admin-project-manager");
+  const categoryList = modal?.querySelector(".admin-project-category-list");
+  const projectList = modal?.querySelector(".admin-project-list-manager");
+  const keyOrderSections = modal?.querySelector("[data-key-order-sections]");
   if (!categoryList || !projectList) return;
 
-  const categories = getProjectCategoryOptions();
+  const allProjectsCount = projectRows.filter((project) => project.name).length;
+  const categories = sortCategoriesByKey(projectCategoryRows)
+    .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
+    .map((row) => ({
+      value: row.category,
+      label: row.label || row.category
+    }));
 
-  categoryList.innerHTML = categories.length
-    ? ""
-    : `<div class="admin-project-manager-empty">No categories yet. Add one to create your first project category.</div>`;
+  categoryList.innerHTML = `
+    <div class="admin-project-category-card admin-project-category-card--all">
+      <div>
+        <strong>All</strong>
+        <span>${allProjectsCount} project${allProjectsCount === 1 ? "" : "s"}</span>
+        <span>All Key order is managed here.</span>
+      </div>
+      <div class="admin-project-card-actions">
+        <button type="button" class="admin-project-manager-btn" data-action="edit-all-keys">Edit All</button>
+      </div>
+    </div>
+    ${categories.length ? "" : `<div class="admin-project-manager-empty">No categories yet. Add one to create your first project category.</div>`}
+  `;
 
   categories.forEach(({ value, label }) => {
     const count = projectRows.filter((project) => project.category === value && project.name).length;
+    const categoryRow = projectCategoryRows.find((row) => row.category === value);
     const card = document.createElement("div");
     card.className = "admin-project-category-card";
     card.innerHTML = `
       <div>
         <strong>${label}</strong>
         <span>${count} project${count === 1 ? "" : "s"}</span>
+        <span>Category Key Letter: ${categoryRow?.Category_Key_letter || "None"}</span>
       </div>
       <div class="admin-project-card-actions">
         <button type="button" class="admin-project-manager-btn" data-action="edit-category">Edit Category</button>
@@ -677,34 +1386,222 @@ function renderProjectManager() {
     categoryList.appendChild(card);
   });
 
-  const visibleProjects = projectRows.filter((project) => project.name);
-  projectList.innerHTML = visibleProjects.length
+  categoryList.querySelector('[data-action="edit-all-keys"]')?.addEventListener("click", () => {
+    closeProjectManager();
+    openEditAllKeysEditor();
+  });
+
+  const groupedProjectCategories = sortCategoriesByKey(projectCategoryRows)
+    .filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY)
+    .map((row) => ({
+      value: row.category,
+      label: row.label || row.category,
+      projects: sortProjectsByPriority(
+        projectRows.filter((project) => project.name && normalizeCategory(project.category) === normalizeCategory(row.category)),
+        projectCategoryRows,
+        row.category,
+        "category_key"
+      )
+    }))
+    .filter((group) => group.projects.length);
+
+  const uncategorizedProjects = sortProjectsByPriority(
+    projectRows.filter((project) => project.name && !String(project.category || "").trim()),
+    projectCategoryRows,
+    ALL_CATEGORY,
+    "all_Key"
+  );
+
+  const projectGroups = [
+    ...groupedProjectCategories,
+    ...(uncategorizedProjects.length ? [{
+      value: "uncategorized",
+      label: "Uncategorized",
+      projects: uncategorizedProjects
+    }] : [])
+  ];
+
+  projectList.innerHTML = projectGroups.length
     ? ""
     : `<div class="admin-project-manager-empty">No projects yet. Add a project to get started.</div>`;
 
-  visibleProjects.forEach((project) => {
-    const card = document.createElement("div");
-    card.className = "admin-project-card";
-    card.innerHTML = `
-      <div class="admin-project-card-main">
-        <strong>${project.name || "Untitled Project"}</strong>
-        <span>${project.category || "Uncategorized"}${project.project_date ? ` • ${project.project_date}` : ""}</span>
+  projectGroups.forEach((group) => {
+    const section = document.createElement("section");
+    section.className = "admin-project-group-section";
+    section.dataset.projectGroupSection = "true";
+    section.dataset.sectionOpen = "false";
+    section.innerHTML = `
+      <div class="admin-project-group-section-header">
+        <button type="button" class="admin-project-group-toggle" data-project-group-toggle aria-expanded="false">
+          <strong>${group.label}</strong>
+          <span>${group.projects.length} project${group.projects.length === 1 ? "" : "s"}</span>
+          <ion-icon name="chevron-down-outline"></ion-icon>
+        </button>
       </div>
-      <div class="admin-project-card-actions">
-        <button type="button" class="admin-project-manager-btn" data-action="edit">Edit Project</button>
-        <button type="button" class="admin-project-manager-btn danger" data-action="delete">Delete</button>
-      </div>
+      <div class="admin-project-group-list" data-project-group-content hidden></div>
     `;
-    card.querySelector('[data-action="edit"]').addEventListener("click", () => {
-      closeProjectManager();
-      openProjectEditor(project);
+
+    const list = section.querySelector("[data-project-group-content]");
+    group.projects.forEach((project) => {
+      const card = document.createElement("div");
+      card.className = "admin-project-card";
+      card.innerHTML = `
+        <div class="admin-project-card-main">
+          <strong>${project.name || "Untitled Project"}</strong>
+          <span>${project.category || "Uncategorized"}${project.project_date ? ` • ${project.project_date}` : ""}</span>
+          <span>All Key: ${project.all_Key || project.all_key || "None"}</span>
+        </div>
+        <div class="admin-project-card-actions">
+          <button type="button" class="admin-project-manager-btn" data-action="edit">Edit Project</button>
+          <button type="button" class="admin-project-manager-btn danger" data-action="delete">Delete</button>
+        </div>
+      `;
+      card.querySelector('[data-action="edit"]').addEventListener("click", () => {
+        openProjectEditorFromManager(project);
+      });
+      card.querySelector('[data-action="delete"]').addEventListener("click", () => {
+        closeProjectManager();
+        deleteProject(project);
+      });
+      list.appendChild(card);
     });
-    card.querySelector('[data-action="delete"]').addEventListener("click", () => {
-      closeProjectManager();
-      deleteProject(project);
+
+    section.querySelector("[data-project-group-toggle]")?.addEventListener("click", () => {
+      const isOpen = section.dataset.sectionOpen === "true";
+      const nextOpen = !isOpen;
+      section.dataset.sectionOpen = nextOpen ? "true" : "false";
+      section.classList.toggle("admin-project-group-section--open", nextOpen);
+      list.hidden = !nextOpen;
+      section.querySelector("[data-project-group-toggle]")?.setAttribute("aria-expanded", nextOpen ? "true" : "false");
     });
-    projectList.appendChild(card);
+
+    projectList.appendChild(section);
   });
+
+  if (keyOrderSections) {
+    const orderedAllProjects = sortProjectsByPriority(
+      projectRows.filter((project) => project.name),
+      projectCategoryRows,
+      ALL_CATEGORY,
+      "all_Key"
+    );
+    const orderedCategories = sortCategoriesByKey(projectCategoryRows).filter((row) => row.category && normalizeCategory(row.category) !== ALL_CATEGORY);
+    keyOrderSections.innerHTML = `
+      <section class="admin-project-key-order-section" data-key-order-section data-section-open="false">
+        <div class="admin-project-key-order-section-header">
+          <button type="button" class="admin-project-key-order-toggle" data-key-order-toggle aria-expanded="false">
+            <strong>All</strong>
+            <ion-icon name="chevron-down-outline"></ion-icon>
+          </button>
+        </div>
+        <div class="admin-project-key-order-list" data-key-order-content hidden>
+          ${orderedAllProjects.length ? orderedAllProjects.map((project) => `
+            <div class="admin-project-key-order-card">
+              <div class="admin-project-key-order-card-main">
+                <strong>${project.name || "Untitled Project"}</strong>
+                <span>${project.category || "Uncategorized"}${project.project_date ? ` • ${project.project_date}` : ""}</span>
+              </div>
+              ${(() => {
+                const keyParts = getOrderKeyParts(project.all_Key || project.all_key || "A001");
+                const prefix = keyParts.prefix.toUpperCase() || "A";
+                const numberText = keyParts.hasNumber ? String(keyParts.number).padStart(Math.max(String(Math.trunc(keyParts.number)).length, 3), "0") : "001";
+                return `
+                  <label class="admin-project-key-order-input">
+                    <span>All Key</span>
+                    <div class="admin-project-key-order-field">
+                      <span class="admin-project-key-order-prefix">${prefix}</span>
+                      <input
+                        type="text"
+                        value="${numberText.replace(/"/g, "&quot;")}"
+                        data-order-input="project"
+                        data-row-id="${project.id}"
+                        data-key-prefix="${prefix}"
+                        data-key-width="${Math.max(String(Math.trunc(keyParts.number || 0) || 0).length, 3)}"
+                      >
+                    </div>
+                  </label>
+                `;
+              })()}
+            </div>
+          `).join("") : `<div class="admin-project-manager-empty">No projects yet.</div>`}
+        </div>
+      </section>
+      ${orderedCategories.map((categoryRow) => {
+        const projectsInCategory = sortProjectsByPriority(
+          projectRows.filter((project) => project.name && normalizeCategory(project.category) === normalizeCategory(categoryRow.category)),
+          projectCategoryRows,
+          categoryRow.category,
+          "category_key"
+        );
+
+        return `
+          <section class="admin-project-key-order-section" data-key-order-section data-section-open="false">
+            <div class="admin-project-key-order-section-header">
+              <button type="button" class="admin-project-key-order-toggle" data-key-order-toggle aria-expanded="false">
+                <strong>${categoryRow.label || categoryRow.category}</strong>
+                <ion-icon name="chevron-down-outline"></ion-icon>
+              </button>
+            </div>
+            <div class="admin-project-key-order-list" data-key-order-content hidden>
+              ${projectsInCategory.length ? projectsInCategory.map((project) => `
+                <div class="admin-project-key-order-card">
+                  <div class="admin-project-key-order-card-main">
+                    <strong>${project.name || "Untitled Project"}</strong>
+                    <span>${project.category || "Uncategorized"}${project.project_date ? ` • ${project.project_date}` : ""}</span>
+                  </div>
+                  ${(() => {
+                    const keyParts = getOrderKeyParts(project.category_key || "A001");
+                    const prefix = keyParts.prefix.toUpperCase() || "A";
+                    const numberText = keyParts.hasNumber ? String(keyParts.number).padStart(Math.max(String(Math.trunc(keyParts.number)).length, 3), "0") : "001";
+                    return `
+                      <label class="admin-project-key-order-input">
+                        <span>Category Key</span>
+                        <div class="admin-project-key-order-field">
+                          <span class="admin-project-key-order-prefix">${prefix}</span>
+                          <input
+                            type="text"
+                            value="${numberText.replace(/"/g, "&quot;")}"
+                            data-order-input="project-category"
+                            data-row-id="${project.id}"
+                            data-key-prefix="${prefix}"
+                            data-key-width="${Math.max(String(Math.trunc(keyParts.number || 0) || 0).length, 3)}"
+                          >
+                        </div>
+                      </label>
+                    `;
+                  })()}
+                </div>
+              `).join("") : `<div class="admin-project-manager-empty">No projects in this category.</div>`}
+            </div>
+          </section>
+        `;
+      }).join("")}
+    `;
+
+    keyOrderSections.querySelectorAll("[data-key-order-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const section = button.closest("[data-key-order-section]");
+        const content = section?.querySelector("[data-key-order-content]");
+        const isOpen = section?.dataset.sectionOpen === "true";
+        const nextOpen = !isOpen;
+
+        if (section) {
+          section.dataset.sectionOpen = nextOpen ? "true" : "false";
+          section.classList.toggle("admin-project-key-order-section--open", nextOpen);
+        }
+
+        if (content) {
+          content.hidden = !nextOpen;
+        }
+
+        button.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+      });
+    });
+
+    keyOrderSections.querySelectorAll('[data-order-input="project"], [data-order-input="project-category"]').forEach((input) => {
+      bindDigitsOnlyInput(input, input.value || "001");
+    });
+  }
 }
 
 function openProjectManager() {

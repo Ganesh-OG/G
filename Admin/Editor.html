@@ -207,6 +207,10 @@
             <button class="navbar-link" data-nav-link>Contact</button>
           </li>
 
+          <li class="navbar-item">
+            <button class="navbar-link" data-nav-link>Messages</button>
+          </li>
+
         </ul>
 
       </nav>
@@ -567,6 +571,31 @@
         </section>
 
       </article>
+
+      <article class="messages" data-page="messages">
+
+        <header>
+          <h2 class="h2 article-title">Messages</h2>
+        </header>
+
+        <section class="admin-messages">
+          <div class="admin-messages-layout">
+            <aside class="admin-messages-sidebar">
+              <div class="admin-messages-toolbar">
+                <button type="button" class="admin-social-manager-add" id="admin-messages-refresh">Refresh</button>
+              </div>
+              <div class="admin-messages-list" id="admin-messages-list"></div>
+            </aside>
+
+            <section class="admin-messages-detail" id="admin-messages-detail">
+              <div class="admin-messages-empty">
+                Select a message to read it here.
+              </div>
+            </section>
+          </div>
+        </section>
+
+      </article>
     
 
     </div>
@@ -584,6 +613,7 @@
   -->
   <script src="./assets/js/script.js"></script>
   <script type="module" src="./components/contact-form.js"></script>
+  <script type="module" src="./components/contact-subjects.js"></script>
 
   <!--
     - ionicon link
@@ -601,6 +631,8 @@
   <script type="module" src="./components/Resume.js"></script>
   <script type="module" src="./components/certifications.js"></script>
   <script type="module" src="./components/connections.js"></script>
+  <script type="module" src="./components/messages.js"></script>
+  <script type="module" src="./components/admin-user-menu.js"></script>
   <script>
     window.addEventListener("load", function() {
         // Hide the loading screen once all content is loaded

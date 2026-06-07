@@ -1,0 +1,38 @@
+{
+  "badge": "File-backed Prompt",
+  "title": "Bulk AD User Creation",
+  "eyebrow": "Automating User Provisioning in Active Directory",
+  "subtitle": "A PowerShell workflow for creating multiple accounts from a CSV source.",
+  "summary": "User onboarding often requires creating multiple Active Directory accounts within a short period. Performing this task manually increases the risk of configuration errors and consumes valuable administrative time.",
+  "prompt": "Open this page to present the bulk provisioning workflow, the key benefits, and the sample PowerShell automation used to create AD users from CSV input.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Scenario", "value": "Active Directory onboarding" },
+    { "label": "Input", "value": "CSV-driven user list" },
+    { "label": "Output", "value": "Users created and logged" }
+  ],
+  "blocks": [
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "items": [
+        "Reduced manual effort",
+        "Consistent account configuration",
+        "Duplicate account prevention",
+        "Automated logging"
+      ]
+    },
+    {
+      "type": "text",
+      "title": "What It Does",
+      "text": "This automation reads user data from a CSV file, checks whether the account already exists, creates the account when needed, assigns a password, and writes audit-friendly log entries."
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "Import-Module ActiveDirectory\n\n$CsvPath = \".\\\\Users.csv\"\n$LogFile = \".\\\\ADUserCreation.log\"\n\n$Users = Import-Csv $CsvPath\n\nforeach ($User in $Users)\n{\n    try\n    {\n        $ExistingUser = Get-ADUser `\n            -Filter \"SamAccountName -eq '$($User.SamAccountName)'\" `\n            -ErrorAction SilentlyContinue\n\n        if (!$ExistingUser)\n        {\n            $Password = ConvertTo-SecureString `\n                \"Welcome@123\" `\n                -AsPlainText `\n                -Force\n\n            New-ADUser `\n                -Name \"$($User.FirstName) $($User.LastName)\" `\n                -GivenName $User.FirstName `\n                -Surname $User.LastName `\n                -SamAccountName $User.SamAccountName `\n                -UserPrincipalName \"$($User.SamAccountName)@company.com\" `\n                -Department $User.Department `\n                -Path \"OU=Employees,DC=Company,DC=Com\" `\n                -Enabled $true `\n                -AccountPassword $Password `\n                -ChangePasswordAtLogon $true\n\n            Add-Content $LogFile \"$(Get-Date) - Created $($User.SamAccountName)\"\n        }\n        else\n        {\n            Add-Content $LogFile \"$(Get-Date) - User already exists\"\n        }\n    }\n    catch\n    {\n        Add-Content $LogFile \"$(Get-Date) - Error: $_\"\n    }\n}"
+    }
+  ]
+}

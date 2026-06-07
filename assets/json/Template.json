@@ -1,0 +1,69 @@
+{
+  "badge": "Template",
+  "title": "Project title goes here",
+  "eyebrow": "Editable starter document",
+  "subtitle": "Use this as the base for future file-backed project pages.",
+  "summary": "This template keeps the layout plain and document-like while allowing as many text, image, and code blocks as you want.",
+  "backHref": "index.html",
+  "backLabel": "Back to portfolio",
+  "meta": [
+    { "label": "Type", "value": "Reusable template" },
+    { "label": "Purpose", "value": "Project preview page" },
+    { "label": "Layout", "value": "Unlimited blocks" }
+  ],
+  "blocks": [
+    {
+      "type": "text",
+      "title": "Prompt",
+      "href": "https://example.com",
+      "linkLabel": "Open reference",
+      "paragraphs": [
+        "Use this file as the reusable shell for file-backed project previews.",
+        "Add as many blocks as you want, in any order."
+      ]
+    },
+    {
+      "type": "image",
+      "title": "Reference Images",
+      "images": [
+        {
+          "location": "local",
+          "folder": "assets/images",
+          "file": "sample-1.png",
+          "href": "https://example.com/image-1",
+          "alt": "First reference image",
+          "caption": "First image from local folder"
+        },
+        {
+          "location": "supabase",
+          "folder": "Projects",
+          "file": "sample-2.png",
+          "href": "https://example.com/image-2",
+          "alt": "Second reference image",
+          "caption": "Second image from Supabase"
+        }
+      ]
+    },
+    {
+      "type": "list",
+      "title": "Key Benefits",
+      "text": "This template is meant to be duplicated for future project files.",
+      "items": [
+        "Keeps the project layout consistent.",
+        "Makes it easy to swap content later.",
+        "Supports multiple text, image, and code sections."
+      ]
+    },
+    {
+      "type": "code",
+      "title": "Sample Script",
+      "language": "powershell",
+      "code": "Write-Host \"Replace this sample with your own PowerShell example.\"\n\nWrite-Host \"You can add more code blocks below if needed.\""
+    },
+    {
+      "type": "quote",
+      "title": "Note",
+      "text": "Each block is independent, so you can repeat images, code blocks, or text sections as many times as you need."
+    }
+  ]
+}
