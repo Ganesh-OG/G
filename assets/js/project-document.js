@@ -362,7 +362,8 @@
       backLink.textContent = normalized.backLabel || "Close preview";
       backLink.addEventListener("click", (event) => {
         event.preventDefault();
-        window.parent.postMessage({ type: "project-document-close" }, window.location.origin);
+        const targetOrigin = window.location.origin === "null" ? "*" : window.location.origin;
+        window.parent.postMessage({ type: "project-document-close" }, targetOrigin);
       });
     }
   }
@@ -381,15 +382,7 @@
       renderDocument(data);
     } catch (error) {
       console.error(error);
-      renderDocument({
-        title: "Project Preview",
-        summary: "Unable to load the project data file.",
-        blocks: [{
-          type: "text",
-          title: "Project Not Found",
-          text: "The project data file could not be loaded."
-        }]
-      });
+      window.location.replace(new URL("../../404.html", import.meta.url).toString());
     }
   }
 

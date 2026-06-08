@@ -5,8 +5,9 @@ This repo supports file-backed project pages that open in the popup and render l
 The new preferred setup is:
 
 - One shared viewer: `project-view.html`
-- One shared renderer: `assets/json/project-document.js`
-- One shared stylesheet: `assets/json/project-document.css`
+- One shared renderer: `assets/js/project-document.js`
+- One shared stylesheet: `assets/CSS/project-document.css`
+- One dedicated fallback page: `404.html`
 - One JSON file per project
 
 The repo is now JSON-first. The old per-project `.HTML` files have been removed.
@@ -18,7 +19,7 @@ Shared viewer assets and project JSON files live in the `assets/json/` folder.
 1. In the admin/projects table, set `project_type` to `file`.
 2. Put the project data file name in `project_file_name`.
 3. If the file name ends with `.json`, the popup opens the shared viewer and loads that JSON.
-4. If the file name is missing, the viewer falls back to `404.json`.
+4. If the file name is missing, the popup falls back to `404.html`, which centers `assets/images/404.gif`.
 
 ## The Main Flow
 

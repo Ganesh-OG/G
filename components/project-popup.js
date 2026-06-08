@@ -1,5 +1,6 @@
 const PROJECT_POPUP_ID = "project-popup-modal";
-const PROJECT_VIEW_PATH = "/project-view.html";
+const PROJECT_VIEW_URL = new URL("../project-view.html", import.meta.url);
+const PROJECT_404_URL = new URL("../404.html", import.meta.url);
 
 function normalizeProjectTitle(title) {
   return String(title || "Project Preview").trim() || "Project Preview";
@@ -27,23 +28,32 @@ function buildProjectViewUrl(fileName) {
   const normalized = normalizeProjectDataFileName(fileName);
   const file = normalized || "404.json";
 
-  const params = new URLSearchParams();
-  params.set("file", file);
-  return `${PROJECT_VIEW_PATH}?${params.toString()}`;
+  const url = new URL(PROJECT_VIEW_URL);
+  url.searchParams.set("file", file);
+  return url.toString();
 }
 
 function buildProject404Url(title) {
-  const params = new URLSearchParams();
-  params.set("file", "404.json");
-  params.set("title", normalizeProjectTitle(title));
-  return `${PROJECT_VIEW_PATH}?${params.toString()}`;
+  const url = new URL(PROJECT_404_URL);
+  url.searchParams.set("title", normalizeProjectTitle(title));
+  return url.toString();
+}
+
+function buildProjectDataUrl(fileName) {
+  const normalized = normalizeProjectDataFileName(fileName) || "404.json";
+  const relativePath = normalized.toLowerCase().startsWith("assets/json/")
+    ? `../${normalized}`
+    : `../assets/json/${normalized}`;
+
+  return new URL(relativePath, import.meta.url);
 }
 
 async function resolveProjectPopupUrl({ fileName, title }) {
   const projectViewUrl = buildProjectViewUrl(fileName);
+  const projectDataUrl = buildProjectDataUrl(fileName);
 
   try {
-    const response = await fetch(projectViewUrl, { cache: "no-store" });
+    const response = await fetch(projectDataUrl, { cache: "no-store" });
     return response.ok ? projectViewUrl : buildProject404Url(title);
   } catch {
     return buildProject404Url(title);
